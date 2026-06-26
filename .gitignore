@@ -24,10 +24,3 @@ parameters.json
 Thumbs.db
 desktop.ini
 $RECYCLE.BIN/
-
-# --- Local Debug/Test Scripts ---
-# These were the isolated tools we built to test functionality
-test.py
-asset_proof.py
-search_discovery.py
-vdf_inspector.py
