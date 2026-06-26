@@ -34,7 +34,7 @@ from core.asset_provider import download_assets, search_steam_apps
 class SearchWorker(QObject):
     """Fetches a potential AppID match and its thumbnail in the background."""
 
-    finished = Signal(object)
+    finished = Signal(object, str)
 
     def __init__(self, query):
         super().__init__()
@@ -58,13 +58,13 @@ class SearchWorker(QObject):
                     result["thumb_bytes"] = None
             except Exception:
                 result["thumb_bytes"] = None
-        self.finished.emit(result)
+        self.finished.emit(result, self.query)
 
 
 class DownloadWorker(QObject):
     """Handles the heavy network lifting in a separate thread."""
 
-    finished = Signal(bool, str)
+    finished = Signal(bool, str, str)
     status_update = Signal(str)
 
     def __init__(self, steam_id, local_id, grid_dir, force):
@@ -83,7 +83,7 @@ class DownloadWorker(QObject):
             self.force,
             status_callback=self.status_update.emit,
         )
-        self.finished.emit(success, message)
+        self.finished.emit(success, message, self.local_id)
 
 
 class AssetDetailsScreen(QWidget):
@@ -320,9 +320,8 @@ class AssetDetailsScreen(QWidget):
 
             steam_id = steam_id.strip()
             if not steam_id.isdigit():
-                QMessageBox.warning(
-                    self, "Invalid ID", "Steam AppID must be a numeric value."
-                )
+                self.status_opacity_effect.setOpacity(1.0)
+                self.status_label.setText("⚠️ AppID must be numeric")
                 return
 
             force = self.force_cb.isChecked()
@@ -351,7 +350,11 @@ class AssetDetailsScreen(QWidget):
 
         self._thread.start()
 
-    def _on_download_finished(self, success, message):
+    def _on_download_finished(self, success, message, target_id):
+        # Verify we are still viewing the same game
+        if str(target_id) != str(self._current_appid):
+            return
+
         self.inject_btn.setEnabled(True)
         self.force_cb.setEnabled(True)
         self.status_label.setText("")
@@ -363,8 +366,13 @@ class AssetDetailsScreen(QWidget):
         else:
             QMessageBox.critical(self, "Error", message)
 
-    def _on_search_finished(self, result):
+    def _on_search_finished(self, result, original_query):
         """Populates and fades in the smart suggestion bar."""
+
+        # Verify the search query still matches the current game
+        if original_query != self._current_name:
+            return
+
         if result:
             self._suggested_steam_id = result["id"]
             self.suggestion_text.setText(f"MATCH: {result['id']}")
