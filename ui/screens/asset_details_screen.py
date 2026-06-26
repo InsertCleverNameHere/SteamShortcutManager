@@ -97,7 +97,9 @@ class AssetDetailsScreen(QWidget):
         self._search_thread = None
         self._worker = None
         self._suggested_steam_id = None
-        self._current_appid = None  # Crucial fix
+        self._current_appid = None
+        self._current_shortcuts_path = ""
+        self._current_name = ""
         self._all_assets_present = False
         self._build_ui()
 
