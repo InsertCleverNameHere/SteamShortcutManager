@@ -100,3 +100,26 @@ def add_new_shortcut(vdf_path, game_name, exe_path, icon_path=""):
 
     except Exception as e:
         return False, f"Error: {str(e)}", None
+    
+
+def update_shortcut_name(vdf_path, appid, new_name):
+    """Finds a shortcut by appid and updates its AppName."""
+    try:
+        data = load_shortcuts(vdf_path)
+        if "shortcuts" not in data:
+            return False, "No shortcuts found."
+
+        found = False
+        # Iterate through the numbered keys ('0', '1', etc.)
+        for idx, entry in data["shortcuts"].items():
+            if normalize_appid(entry.get("appid")) == normalize_appid(appid):
+                entry["AppName"] = new_name
+                found = True
+                break
+        
+        if found:
+            save_shortcuts(vdf_path, data)
+            return True, "Name updated."
+        return False, "Shortcut not found in file."
+    except Exception as e:
+        return False, str(e)

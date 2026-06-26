@@ -8,6 +8,7 @@ from ui.screens.shortcut_list_screen import ShortcutListScreen
 from ui.screens.asset_details_screen import AssetDetailsScreen
 from core.steam import detect_default_steam_dir, find_shortcuts
 
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -21,7 +22,7 @@ class MainWindow(QMainWindow):
         self.setup_screen = SetupScreen()
         self.library_screen = LibraryScreen()
         self.shortcut_screen = ShortcutListScreen()
-        self.asset_screen = AssetDetailsScreen() # Standardized naming
+        self.asset_screen = AssetDetailsScreen()  # Standardized naming
 
         self.stack.addWidget(self.setup_screen)
         self.stack.addWidget(self.library_screen)
@@ -30,15 +31,24 @@ class MainWindow(QMainWindow):
 
         # Connections
         self.setup_screen.steam_dir_confirmed.connect(self.on_steam_dir_found)
-        self.library_screen.change_steam_dir.connect(lambda: self.stack.setCurrentWidget(self.setup_screen))
+        self.library_screen.change_steam_dir.connect(
+            lambda: self.stack.setCurrentWidget(self.setup_screen)
+        )
         self.library_screen.user_selected.connect(self.on_user_confirmed)
-        
+
         # Shortcut List Connections
-        self.shortcut_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.library_screen))
+        self.shortcut_screen.back_requested.connect(
+            lambda: self.stack.setCurrentWidget(self.library_screen)
+        )
         self.shortcut_screen.shortcut_clicked.connect(self.on_shortcut_selected)
-        
+
         # Asset Details Connections
         self.asset_screen.back_requested.connect(self.on_back_from_details)
+        self.asset_screen.name_changed.connect(
+            lambda: self.shortcut_screen.load_user_shortcuts(
+                self.shortcut_screen._current_user_obj
+            )
+        )
 
         # Auto-detect
         steam_path = detect_default_steam_dir()
@@ -66,6 +76,7 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.shortcut_screen)
         # Snap the window back to the original size
         self.resize(800, 700)
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
