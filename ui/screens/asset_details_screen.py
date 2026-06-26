@@ -317,6 +317,14 @@ class AssetDetailsScreen(QWidget):
             )
             if not (ok and steam_id):
                 return
+
+            steam_id = steam_id.strip()
+            if not steam_id.isdigit():
+                QMessageBox.warning(
+                    self, "Invalid ID", "Steam AppID must be a numeric value."
+                )
+                return
+
             force = self.force_cb.isChecked()
 
         # UI Feedback
