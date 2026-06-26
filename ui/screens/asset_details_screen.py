@@ -90,6 +90,32 @@ class AssetDetailsScreen(QWidget):
     back_requested = Signal()
     name_changed = Signal()
 
+    def _set_busy(self, is_busy: bool):
+        """Atomically enables or disables controls with visual feedback."""
+        # is_busy=True means UI is locked
+        enabled = not is_busy
+        self.back_btn.setEnabled(enabled)
+        self.inject_btn.setEnabled(enabled)
+        self.delete_btn.setEnabled(enabled)
+        self.edit_btn.setEnabled(enabled)
+        self.force_cb.setEnabled(enabled)
+
+        # Visual dimming for the back button
+        if is_busy:
+            eff = QGraphicsOpacityEffect(self.back_btn)
+            eff.setOpacity(0.4)
+            self.back_btn.setGraphicsEffect(eff)
+        else:
+            self.back_btn.setGraphicsEffect(None)
+
+    def _on_thread_finished(self):
+        """Safely clears the thread reference after it is deleted."""
+        self._thread = None
+
+    def _on_search_thread_finished(self):
+        """Safely clears the search thread reference."""
+        self._search_thread = None
+
     def __init__(self, parent=None):
         super().__init__(parent)
         # ALL state variables must be here
@@ -110,10 +136,10 @@ class AssetDetailsScreen(QWidget):
         # --- Row 1: Toolbox (Back, Match, Status, Controls) ---
         toolbox_row = QHBoxLayout()
 
-        back_btn = QPushButton("← Back")
-        back_btn.setObjectName("secondary")
-        back_btn.clicked.connect(self.back_requested)
-        toolbox_row.addWidget(back_btn)
+        self.back_btn = QPushButton("← Back")
+        self.back_btn.setObjectName("secondary")
+        self.back_btn.clicked.connect(self.back_requested)
+        toolbox_row.addWidget(self.back_btn)
 
         # Smart Suggestion Badge
         self.suggestion_widget = QFrame()
@@ -327,8 +353,7 @@ class AssetDetailsScreen(QWidget):
             force = self.force_cb.isChecked()
 
         # UI Feedback
-        self.inject_btn.setEnabled(False)
-        self.force_cb.setEnabled(False)
+        self._set_busy(True)
         self.status_opacity_effect.setOpacity(1.0)
         self.status_label.setText("Initializing...")
 
@@ -346,6 +371,7 @@ class AssetDetailsScreen(QWidget):
         self._worker.finished.connect(self._on_download_finished)
         self._worker.finished.connect(self._thread.quit)
         self._worker.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._on_thread_finished)
         self._thread.finished.connect(self._thread.deleteLater)
 
         self._thread.start()
@@ -355,8 +381,7 @@ class AssetDetailsScreen(QWidget):
         if str(target_id) != str(self._current_appid):
             return
 
-        self.inject_btn.setEnabled(True)
-        self.force_cb.setEnabled(True)
+        self._set_busy(False)
         self.status_label.setText("")
         if success:
             # Refresh the view to show new assets
@@ -546,6 +571,9 @@ class AssetDetailsScreen(QWidget):
         self._search_thread.started.connect(self._search_worker.run)
         self._search_worker.finished.connect(self._on_search_finished)
         self._search_worker.finished.connect(self._search_thread.quit)
+        self._search_worker.finished.connect(self._search_worker.deleteLater)
+        self._search_thread.finished.connect(self._on_search_thread_finished)
+        self._search_thread.finished.connect(self._search_thread.deleteLater)
         self._search_thread.start()
 
     def _on_delete_clicked(self):
