@@ -78,7 +78,7 @@ def add_new_shortcut(vdf_path, game_name, exe_path, icon_path=""):
             "AppName": game_name,
             "Exe": f'"{exe_path}"',
             "StartDir": f'"{start_dir}\\"',
-            "icon": f'"{icon_path}"' if icon_path else "",
+            "icon": f'"{os.path.normpath(icon_path)}"' if icon_path else "",
             "ShortcutPath": "",
             "LaunchOptions": "",
             "IsHidden": 0,
