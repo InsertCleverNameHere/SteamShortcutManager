@@ -166,6 +166,25 @@ class AssetDetailsScreen(QWidget):
         self.inject_btn.clicked.connect(self._on_inject_clicked)
         toolbox_row.addWidget(self.inject_btn)
 
+        # Delete button
+        self.delete_btn = QPushButton("🗑️")
+        self.delete_btn.setFixedSize(40, 40)
+        self.delete_btn.setCursor(Qt.PointingHandCursor)
+        self.delete_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                font-size: 20px;
+                padding: 0px;
+            }
+            QPushButton:hover {
+                background-color: rgba(224, 82, 82, 40); /* Palette Danger red */
+                border-radius: 20px;
+            }
+        """)
+        self.delete_btn.clicked.connect(self._on_delete_clicked)
+        toolbox_row.addWidget(self.delete_btn)
+
         self.layout.addLayout(toolbox_row)
         self.layout.addSpacing(20)
 
@@ -502,3 +521,57 @@ class AssetDetailsScreen(QWidget):
         self._search_worker.finished.connect(self._on_search_finished)
         self._search_worker.finished.connect(self._search_thread.quit)
         self._search_thread.start()
+
+    def _on_delete_clicked(self):
+        import shutil
+        from core.vdf_parser import delete_shortcut
+
+        # 1. Primary Confirmation
+        reply = QMessageBox.question(
+            self,
+            "Confirm Deletion",
+            f"Are you sure you want to remove '{self._current_name}' from Steam?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.No:
+            return
+
+        # 2. Asset Cleanup Option
+        clean_assets = QMessageBox.question(
+            self,
+            "Cleanup Assets",
+            "Would you also like to delete the associated images and JSON from the grid folder?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+
+        # 3. Create Safety Backup
+        vdf_path = self._current_shortcuts_path
+        if os.path.exists(vdf_path):
+            shutil.copy2(vdf_path, vdf_path + ".bak")
+
+        # 4. Perform Deletion in VDF
+        success, msg = delete_shortcut(vdf_path, self._current_appid)
+
+        if success:
+            # 5. Optional Asset File Cleanup
+            if clean_assets == QMessageBox.Yes:
+                grid_dir = os.path.join(os.path.dirname(vdf_path), "grid")
+                # Look for all 5 patterns ({appid}p.jpg, {appid}.jpg, etc.)
+                for suffix in ["p", "", "_hero", "_logo"]:
+                    for ext in [".jpg", ".png", ".json"]:  # covers image and json
+                        target_file = os.path.join(
+                            grid_dir, f"{self._current_appid}{suffix}{ext}"
+                        )
+                        if os.path.exists(target_file):
+                            try:
+                                os.remove(target_file)
+                            except:
+                                pass
+
+            # 6. Finalize and Exit
+            self.name_changed.emit()  # Refresh the main list
+            self.back_requested.emit()  # Go back to the list automatically
+        else:
+            QMessageBox.critical(self, "Error", msg)
