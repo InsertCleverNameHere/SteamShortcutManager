@@ -1,4 +1,5 @@
 import os
+import shutil
 import requests
 from PySide6.QtWidgets import (
     QWidget,
@@ -14,6 +15,7 @@ from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
     QSizePolicy,
     QLineEdit,
+    QFileDialog,
 )
 from PySide6.QtGui import QPixmap
 from PySide6.QtCore import (
@@ -417,6 +419,12 @@ class AssetDetailsScreen(QWidget):
             container.setFixedWidth(320)
             container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
 
+            # Manual Upload
+            container.setCursor(Qt.PointingHandCursor)
+            container.setToolTip(f"Click to manually  upload {key.upper()}")
+            # User a closure to capture the current 'key'
+            container.mousePressEvent = lambda e, k=key: self._on_manual_upload(k)
+
             container_layout = QVBoxLayout(container)
             container_layout.setContentsMargins(0, 0, 0, 0)
             container_layout.setSpacing(10)
@@ -575,3 +583,51 @@ class AssetDetailsScreen(QWidget):
             self.back_requested.emit()  # Go back to the list automatically
         else:
             QMessageBox.critical(self, "Error", msg)
+
+    def _on_manual_upload(self, asset_type):
+        """Opens a file dialog and copies a local image to the Steam grid folder."""
+        if asset_type == "json":
+            # Skip JSON
+            return
+
+        # 1. Pick the file
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Select {asset_type.capitalize()}",
+            "",
+            "Images (*.png *.jpg *.jpeg);;All Files (*.*)",
+        )
+        if not file_path:
+            return
+
+        # 2. Determine target filename based on asset type
+        # Patterns: capsule='p', header='', hero='_hero', logo='_logo'
+        suffix_map = {"capsule": "p", "header": "", "hero": "_hero", "logo": "_logo"}
+
+        ext = os.path.splitext(file_path)[1].lower()
+        new_filename = f"{self._current_appid}{suffix_map[asset_type]}{ext}"
+        grid_dir = os.path.join(os.path.dirname(self._current_shortcuts_path), "grid")
+        dest_path = os.path.join(grid_dir, new_filename)
+
+        try:
+            # Delete existing assets with other file extensions
+            for existing_ext in [".jpg", ".png", ".jpeg"]:
+                potential_old_file = os.path.join(
+                    grid_dir,
+                    f"{self._current_appid}{suffix_map[asset_type]}{existing_ext}",
+                )
+                if os.path.exists(potential_old_file):
+                    try:
+                        os.remove(potential_old_file)
+                    except:
+                        pass  # Ignore errors if file is locked
+            # 3. Copy and Overwrite
+            shutil.copy2(file_path, dest_path)
+
+            # 4. Refresh UI to show the new asset
+            self.load_assets(
+                self._current_name, self._current_shortcuts_path, self._current_appid
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "Upload Error", f"Failed to copy file: {e}")
