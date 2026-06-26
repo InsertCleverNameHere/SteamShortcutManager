@@ -1,4 +1,33 @@
-"core/__pycache__"
-"ui/__pycache__"
-"ui/screens/__pycache__"
-"ui/widgets/__pycache__"
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# --- Application Specific ---
+*.bak
+parameters.json
+
+# --- VS Code ---
+.vscode/*
+!.vscode/settings.json
+.history/
+
+# --- Windows OS ---
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# --- Local Debug/Test Scripts ---
+# These were the isolated tools we built to test functionality
+test.py
+asset_proof.py
+search_discovery.py
+vdf_inspector.py
