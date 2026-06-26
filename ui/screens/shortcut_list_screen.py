@@ -1,7 +1,8 @@
 import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QScrollArea, QPushButton, QFrame, QLineEdit, QFileDialog, QMessageBox, QInputDialog
+    QScrollArea, QPushButton, QFrame, QLineEdit,
+    QFileDialog, QMessageBox, QInputDialog, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from ui.theme import PALETTE
@@ -68,11 +69,13 @@ class ShortcutListScreen(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
+        self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # Only vertical scrolling
         # Prevent focus rectangle on scrollbar
         self.scroll.verticalScrollBar().setFocusPolicy(Qt.NoFocus)
         
         self.list_container = QWidget()
         self.list_layout = QVBoxLayout(self.list_container)
+        self.list_layout.setContentsMargins(0, 0, 12, 0)
         self.list_layout.setSpacing(4)
         self.list_layout.setAlignment(Qt.AlignTop)
         
@@ -209,6 +212,7 @@ class ShortcutListScreen(QWidget):
                 sub_lbl = QLabel(sub_text)
                 sub_lbl.setStyleSheet(f"font-size: 11px; color: {PALETTE['text_muted']}; border: none; background: transparent;")
                 sub_lbl.setWordWrap(False) # Keep it on one line for a cleaner look
+                sub_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred) # Allow horizontal shrinking
                 card_layout.addWidget(sub_lbl)
                 
                 # Store reference for filtering

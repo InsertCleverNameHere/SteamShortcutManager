@@ -38,7 +38,7 @@ class MainWindow(QMainWindow):
         self.shortcut_screen.shortcut_clicked.connect(self.on_shortcut_selected)
         
         # Asset Details Connections
-        self.asset_screen.back_requested.connect(lambda: self.stack.setCurrentWidget(self.shortcut_screen))
+        self.asset_screen.back_requested.connect(self.on_back_from_details)
 
         # Auto-detect
         steam_path = detect_default_steam_dir()
@@ -60,6 +60,12 @@ class MainWindow(QMainWindow):
         """This is now correctly inside the class and uses the correct variable name."""
         self.asset_screen.load_assets(name, path, appid)
         self.stack.setCurrentWidget(self.asset_screen)
+
+    def on_back_from_details(self):
+        """Resets the window to default size when leaving the details screen."""
+        self.stack.setCurrentWidget(self.shortcut_screen)
+        # Snap the window back to the original size
+        self.resize(800, 700)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

@@ -77,18 +77,18 @@ class AssetDetailsScreen(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(24, 24, 24, 24)
 
-        # Header
-        header = QHBoxLayout()
+        # --- Row 1: Toolbox (Back, Match, Status, Controls) ---
+        toolbox_row = QHBoxLayout()
+        
         back_btn = QPushButton("← Back")
         back_btn.setObjectName("secondary")
         back_btn.clicked.connect(self.back_requested)
-        header.addWidget(back_btn)
-        header.addStretch()
+        toolbox_row.addWidget(back_btn)
 
-        # --- Smart Suggestion Badge (Restyled) ---
+        # Smart Suggestion Badge
         self.suggestion_widget = QFrame()
         self.suggestion_widget.setFixedHeight(36)
-        self.suggestion_widget.setFixedWidth(240)
+        self.suggestion_widget.setFixedWidth(220)
         self.suggestion_widget.setStyleSheet(f"""
             QFrame {{
                 background: {PALETTE['bg_card']}; 
@@ -97,7 +97,7 @@ class AssetDetailsScreen(QWidget):
             }}
         """)
         self.suggestion_layout = QHBoxLayout(self.suggestion_widget)
-        self.suggestion_layout.setContentsMargins(6, 0, 10, 0)
+        self.suggestion_layout.setContentsMargins(4, 0, 10, 0)
         self.suggestion_layout.setSpacing(8)
         
         self.suggestion_thumb = QLabel()
@@ -113,39 +113,47 @@ class AssetDetailsScreen(QWidget):
         self.suggestion_opacity = QGraphicsOpacityEffect(self.suggestion_widget)
         self.suggestion_widget.setGraphicsEffect(self.suggestion_opacity)
         self.suggestion_opacity.setOpacity(0.0)
-        
-        # Place it right after the Back button
-        header.insertWidget(1, self.suggestion_widget)
-        header.insertSpacing(2, 10)
+        toolbox_row.addWidget(self.suggestion_widget)
 
-        # --- Inject Area (Status, Checkbox, Button) ---
+        # This stretch pushes the controls to the far right
+        toolbox_row.addStretch()
+
         self.status_label = QLabel("")
         self.status_label.setStyleSheet(f"color: {PALETTE['text_primary']}; font-size: 11px; font-weight: bold; margin-right: 10px;")
-        # Fix width and alignment to prevent layout jumping
-        self.status_label.setFixedWidth(220) 
         self.status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        header.insertWidget(3, self.status_label)
+        toolbox_row.addWidget(self.status_label)
 
         self.force_cb = QCheckBox("Force Overwrite")
         self.force_cb.setStyleSheet(f"color: {PALETTE['text_secondary']}; font-size: 11px;")
         self.force_cb.stateChanged.connect(self._update_button_state)
-        header.addWidget(self.force_cb)
+        toolbox_row.addWidget(self.force_cb)
 
         self.inject_btn = QPushButton("↓ Inject from Steam")
         self.inject_btn.clicked.connect(self._on_inject_clicked)
-        header.addWidget(self.inject_btn)
+        toolbox_row.addWidget(self.inject_btn)
+
+        self.layout.addLayout(toolbox_row)
+        self.layout.addSpacing(20)
+
+        # --- Row 2: Game Title ---
+        title_row = QHBoxLayout()
+        title_row.addStretch() # Left spacer
         
-        header.addSpacing(20)
         self.title_label = QLabel("Asset Details")
         self.title_label.setObjectName("heading")
-        header.addWidget(self.title_label)
-        header.addStretch()
-        self.layout.addLayout(header)
+        self.title_label.setWordWrap(True) # Re-enabled to allow wrapping for very long names
+        self.title_label.setMaximumWidth(750) # Cap width to prevent window stretching
+        self.title_label.setAlignment(Qt.AlignCenter) # Center text within the label
+        
+        title_row.addWidget(self.title_label)
+        title_row.addStretch() # Right spacer
+        self.layout.addLayout(title_row)
+
         self.layout.addSpacing(40)
 
         # Asset Grid
         self.grid = QGridLayout()
-        self.grid.setSpacing(40)
+        self.grid.setSpacing(0)
         self.grid.setColumnStretch(0, 1)
         self.grid.setColumnStretch(1, 1)
         self.layout.addLayout(self.grid)
@@ -158,7 +166,7 @@ class AssetDetailsScreen(QWidget):
         self.status_opacity_effect = QGraphicsOpacityEffect(self.status_label)
         self.status_label.setGraphicsEffect(self.status_opacity_effect)
         
-        # Initial states: set opacity to 0 for status and 1 for button
+        # Initial states
         self.status_opacity_effect.setOpacity(0.0)
         self.btn_opacity_effect.setOpacity(1.0)
 
@@ -322,9 +330,8 @@ class AssetDetailsScreen(QWidget):
 
         for key, (exists, path) in status.items():
             container = QWidget()
-            container.setMinimumWidth(320)
-            # FIX: Use QSizePolicy directly (without Qt.) and allow horizontal expansion
-            container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            container.setFixedWidth(320) 
+            container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
             
             container_layout = QVBoxLayout(container)
             container_layout.setContentsMargins(0, 0, 0, 0)
@@ -357,6 +364,7 @@ class AssetDetailsScreen(QWidget):
                 container_layout.addWidget(msg)
 
             row, col = positions[key]
-            # Align individual widgets to the border of their cell
+            # Column 0 (Capsule/Hero) sticks Left. 
+            # Column 1 (Header/Logo) sticks Right.
             alignment = Qt.AlignLeft if col == 0 else Qt.AlignRight
             self.grid.addWidget(container, row, col, alignment | Qt.AlignTop)
