@@ -102,8 +102,8 @@ class AssetDetailsScreen(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(24, 24, 24, 24)
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(24, 24, 24, 24)
 
         # --- Row 1: Toolbox (Back, Match, Status, Controls) ---
         toolbox_row = QHBoxLayout()
@@ -187,8 +187,8 @@ class AssetDetailsScreen(QWidget):
         self.delete_btn.clicked.connect(self._on_delete_clicked)
         toolbox_row.addWidget(self.delete_btn)
 
-        self.layout.addLayout(toolbox_row)
-        self.layout.addSpacing(20)
+        self.main_layout.addLayout(toolbox_row)
+        self.main_layout.addSpacing(20)
 
         # --- Row 2: Game Title ---
         title_row = QHBoxLayout()
@@ -235,17 +235,17 @@ class AssetDetailsScreen(QWidget):
         title_row.addWidget(self.edit_btn)
 
         title_row.addStretch()  # Right spacer
-        self.layout.addLayout(title_row)
+        self.main_layout.addLayout(title_row)
 
-        self.layout.addSpacing(40)
+        self.main_layout.addSpacing(40)
 
         # Asset Grid
         self.grid = QGridLayout()
         self.grid.setSpacing(0)
         self.grid.setColumnStretch(0, 1)
         self.grid.setColumnStretch(1, 1)
-        self.layout.addLayout(self.grid)
-        self.layout.addStretch()
+        self.main_layout.addLayout(self.grid)
+        self.main_layout.addStretch()
 
         # Attach opacity effects for animations
         self.btn_opacity_effect = QGraphicsOpacityEffect(self.inject_btn)
