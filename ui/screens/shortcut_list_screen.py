@@ -1,6 +1,7 @@
+import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QScrollArea, QPushButton, QFrame, QLineEdit
+    QScrollArea, QPushButton, QFrame, QLineEdit, QFileDialog, QMessageBox, QInputDialog
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 from ui.theme import PALETTE
@@ -9,8 +10,10 @@ from core.vdf_parser import (
     get_shortcut_list, 
     get_value_case_insensitive, 
     normalize_appid,
+    add_new_shortcut,
 )
 from core.steam import get_asset_status
+from core.utils_win import resolve_windows_shortcut, get_game_name_from_metadata
 
 class ShortcutListScreen(QWidget):
     back_requested = Signal()
@@ -55,6 +58,7 @@ class ShortcutListScreen(QWidget):
         
         # Add Shortcut Button
         add_btn = QPushButton("+ Add Shortcut")
+        add_btn.clicked.connect(self._on_add_clicked)
         header.addWidget(add_btn)
 
         layout.addLayout(header)
@@ -88,8 +92,62 @@ class ShortcutListScreen(QWidget):
         # 2. Surgical Addition: Resume and redraw once at the end
         self.list_container.setUpdatesEnabled(True)
 
+    def _on_add_clicked(self):
+        raw_path, _ = QFileDialog.getOpenFileName(
+            self, "Select Game or Shortcut", "", "Games & Shortcuts (*.exe *.lnk);;All Files (*.*)"
+        )
+        if not raw_path: return
+
+        # Get the name of the file the user actually clicked on (e.g. "Hades.lnk" -> "Hades")
+        file_label = os.path.splitext(os.path.basename(raw_path))[0]
+
+        if raw_path.lower().endswith('.lnk'):
+            # PATH: Resolve the shortcut to find the real EXE
+            exe_path = resolve_windows_shortcut(raw_path)
+            # NAME: Trust the shortcut's filename over the EXE metadata
+            derived_name = file_label
+        else:
+            # PATH: It is the EXE
+            exe_path = raw_path
+            # NAME: Try metadata, fallback to filename
+            derived_name = get_game_name_from_metadata(exe_path)
+
+        # Prompt user (pre-filled with our best guess)
+        game_name, ok = QInputDialog.getText(
+            self, "Add Shortcut", "Enter game name:", text=derived_name
+        )
+        
+        if ok and game_name:
+            vdf_path = self._current_user_obj.shortcuts_path
+            
+            # Automated Backup before writing
+            if os.path.exists(vdf_path):
+                import shutil
+                shutil.copy2(vdf_path, vdf_path + ".bak")
+
+            # Save to VDF
+            success, msg, new_id = add_new_shortcut(
+                vdf_path, 
+                game_name, 
+                exe_path,
+                icon_path=exe_path
+            )
+            
+            if success:
+                # 1. Refresh the internal list data
+                self.load_user_shortcuts(self._current_user_obj)
+                
+                # 2. SURGICAL CHANGE: Redirect to the Detail Screen
+                # This triggers load_assets in the details screen, which
+                # automatically starts the background search for the user.
+                self.shortcut_clicked.emit(game_name, vdf_path, new_id)
+            else:
+                QMessageBox.critical(self, "Error", msg)
+
     def load_user_shortcuts(self, user_obj):
         """Called when a user is selected in the main menu."""
+        # Store the current user object so the Add button knows which VDF to edit
+        self._current_user_obj = user_obj 
         # Fallback to userdata_id if persona_name is missing
         display_name = user_obj.persona_name or user_obj.userdata_id
         self.title_label.setText(f"{display_name}'s Library")

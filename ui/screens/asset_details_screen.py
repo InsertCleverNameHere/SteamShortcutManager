@@ -2,7 +2,7 @@ import os
 import requests
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QFrame, QGridLayout, QInputDialog, QMessageBox, QCheckBox, QGraphicsOpacityEffect
+    QPushButton, QFrame, QGridLayout, QInputDialog, QMessageBox, QCheckBox, QGraphicsOpacityEffect, QSizePolicy
 )
 from PySide6.QtGui import QPixmap
 from PySide6.QtCore import Qt, QThread, QObject, Signal, QPropertyAnimation, QEasingCurve
@@ -170,10 +170,19 @@ class AssetDetailsScreen(QWidget):
         # Determine target opacities
         target_btn_opacity = 1.0 if can_inject else 0.3
         
-        show_status = self._all_assets_present and not self.force_cb.isChecked()
+        # The label should be visible if:
+        # 1. Assets are all present (and we aren't forcing)
+        # 2. OR the label currently contains search/match text
+        has_search_text = "Searching" in self.status_label.text() or "match" in self.status_label.text()
+        show_status = (self._all_assets_present and not self.force_cb.isChecked()) or has_search_text
+        
         target_status_opacity = 1.0 if show_status else 0.0
         
-        if show_status:
+        # Only show 'All assets present' if we aren't currently searching or connecting
+        is_busy = (self._search_thread and self._search_thread.isRunning()) or \
+                  (self._thread and self._thread.isRunning())
+
+        if show_status and not is_busy:
             self.status_label.setText("✅ All assets present")
 
         # 1. Animate Inject Button Opacity
@@ -193,11 +202,16 @@ class AssetDetailsScreen(QWidget):
         # Keep the actual functional state
         self.inject_btn.setEnabled(can_inject)
 
-    def _on_inject_clicked(self):
-        # Pre-fill the input box with the suggested ID if found
-        default_id = self._suggested_steam_id if self._suggested_steam_id else ""
-        steam_id, ok = QInputDialog.getText(self, "Inject Assets", "Enter Steam AppID:", text=default_id)
-        if not (ok and steam_id): return
+    def _on_inject_clicked(self, auto_id=None):
+        # 1. Determine Steam ID and Force state
+        if auto_id:
+            steam_id = auto_id
+            force = False # Never force on auto-fills
+        else:
+            default_id = self._suggested_steam_id if self._suggested_steam_id else ""
+            steam_id, ok = QInputDialog.getText(self, "Inject Assets", "Enter Steam AppID:", text=default_id)
+            if not (ok and steam_id): return
+            force = self.force_cb.isChecked()
 
         # UI Feedback
         self.inject_btn.setEnabled(False)
@@ -208,7 +222,7 @@ class AssetDetailsScreen(QWidget):
         # Setup Thread and Worker
         self._thread = QThread()
         grid_dir = os.path.join(os.path.dirname(self._current_shortcuts_path), "grid")
-        self._worker = DownloadWorker(steam_id, self._current_appid, grid_dir, self.force_cb.isChecked())
+        self._worker = DownloadWorker(steam_id, self._current_appid, grid_dir, force)
         self._worker.moveToThread(self._thread)
 
         # Connect Signals
@@ -247,45 +261,46 @@ class AssetDetailsScreen(QWidget):
             else:
                 self.suggestion_thumb.hide()
 
-            # Animation
+            # Trigger fade-in animation
             self.suggest_anim = QPropertyAnimation(self.suggestion_opacity, b"opacity")
             self.suggest_anim.setDuration(400)
             self.suggest_anim.setEndValue(1.0)
             self.suggest_anim.setEasingCurve(QEasingCurve.OutQuad)
             self.suggest_anim.start()
+            
+            # Update status label to show we found something
+            self.status_label.setText(f"💡 Found Steam Match")
         else:
             self._suggested_steam_id = None
             self.suggestion_opacity.setOpacity(0.0)
+            self.status_label.setText("❓ No match found")
 
     def load_assets(self, game_name, shortcuts_path, appid):
-        # 1. Safely determine if this is a new game
-        # Use getattr to prevent AttributeError if the variable is somehow missing
+        # 1. Improved new game detection with string conversion
         current_id = getattr(self, '_current_appid', None)
-        is_new_game = (appid != current_id)
+        is_new_game = (str(appid) != str(current_id))
 
-        # Store context
         self._current_name = game_name
         self._current_shortcuts_path = shortcuts_path
         self._current_appid = appid
         self.title_label.setText(game_name)
 
-        # 2. SEARCH LOGIC
         if is_new_game:
-            # Safely stop existing search thread
             if self._search_thread is not None:
                 try:
                     if self._search_thread.isRunning():
                         self._search_thread.quit()
                         self._search_thread.wait()
-                except (RuntimeError, AttributeError):
-                    pass 
+                except: pass 
 
-            # Reset suggestion UI
             self.suggestion_opacity.setOpacity(0.0)
             self.suggestion_text.setText("")
             self._suggested_steam_id = None
 
-            # Start fresh search
+            # Restore original message
+            self.status_opacity_effect.setOpacity(1.0)
+            self.status_label.setText("🔍 Searching Steam...")
+
             self._search_thread = QThread()
             self._search_worker = SearchWorker(game_name)
             self._search_worker.moveToThread(self._search_thread)
@@ -294,12 +309,10 @@ class AssetDetailsScreen(QWidget):
             self._search_worker.finished.connect(self._search_thread.quit)
             self._search_thread.start()
         
-    # 3. GRID REFRESH - Runs every time to update 'Missing' flags
         while self.grid.count():
             item = self.grid.takeAt(0)
             widget = item.widget()
-            if widget: 
-                widget.deleteLater()
+            if widget: widget.deleteLater()
 
         status = get_asset_status(shortcuts_path, appid)
         self._all_assets_present = all(exists for exists, path in status.values())
@@ -309,6 +322,10 @@ class AssetDetailsScreen(QWidget):
 
         for key, (exists, path) in status.items():
             container = QWidget()
+            container.setMinimumWidth(320)
+            # FIX: Use QSizePolicy directly (without Qt.) and allow horizontal expansion
+            container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            
             container_layout = QVBoxLayout(container)
             container_layout.setContentsMargins(0, 0, 0, 0)
             container_layout.setSpacing(10)
@@ -322,17 +339,12 @@ class AssetDetailsScreen(QWidget):
                 img_label = QLabel()
                 pix = QPixmap(path)
                 if not pix.isNull():
-                    # --- Constrain both width and height ---
-                    # This prevents wide assets (like Hero/Header) from pushing the window size
                     scaled_pix = pix.scaled(320, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                     img_label.setPixmap(scaled_pix)
                 
                 img_label.setStyleSheet("background: transparent;")
                 img_label.setMinimumHeight(160)
-                # Ensure the label itself doesn't try to grow
-                img_label.setMaximumWidth(320)
                 container_layout.addWidget(img_label)
-                
             elif exists and key == "json":
                 json_lbl = QLabel("✓ Position Data Found")
                 json_lbl.setStyleSheet(f"color: {PALETTE['success']}; font-size: 14px; font-weight: bold; background: transparent;")
@@ -340,8 +352,11 @@ class AssetDetailsScreen(QWidget):
             else:
                 msg = QLabel("× Missing")
                 msg.setStyleSheet(f"color: {PALETTE['danger']}; font-size: 14px; font-weight: bold; background: transparent;")
-                msg.setMinimumHeight(30)
+                msg.setMinimumHeight(160) 
+                msg.setAlignment(Qt.AlignTop)
                 container_layout.addWidget(msg)
 
             row, col = positions[key]
-            self.grid.addWidget(container, row, col, Qt.AlignTop)
+            # Align individual widgets to the border of their cell
+            alignment = Qt.AlignLeft if col == 0 else Qt.AlignRight
+            self.grid.addWidget(container, row, col, alignment | Qt.AlignTop)

@@ -11,7 +11,9 @@ def search_steam_apps(query: str):
     Queries Steam Store search to find a potential match for the name.
     Returns a dict with id, name, and thumbnail URL or None.
     """
-    url = f"https://store.steampowered.com/api/storesearch/?term={query}&l=english&cc=US"
+    # Clean query: Replace hyphens/colons with spaces to help Steam's literal API
+    clean_query = query.replace('-', ' ').replace(':', ' ')
+    url = f"https://store.steampowered.com/api/storesearch/?term={clean_query}&l=english&cc=US"
     try:
         r = requests.get(url, timeout=10)
         data = r.json()

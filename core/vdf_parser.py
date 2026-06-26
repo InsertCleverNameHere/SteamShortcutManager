@@ -5,12 +5,19 @@ never touches vdf directly.
 """
 
 import vdf
-
+import zlib
+import os
 
 def load_shortcuts(path: str) -> dict:
     """Read a binary shortcuts.vdf and return the parsed dict."""
-    with open(path, "rb") as f:
-        return vdf.binary_load(f)
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        return {"shortcuts": {}}
+    try:
+        with open(path, "rb") as f:
+            return vdf.binary_load(f)
+    except Exception:
+        # If the file is corrupted, return an empty structure to prevent crashes
+        return {"shortcuts": {}}
 
 
 def save_shortcuts(path: str, data: dict) -> None:
@@ -27,7 +34,6 @@ def get_shortcut_list(data: dict) -> list[dict]:
 def get_value_case_insensitive(shortcut_dict: dict, target_key: str, default=""):
     """
     Searches for a key in the shortcut dictionary regardless of its casing.
-    (e.g. will find 'appname' even if it is stored as 'AppName')
     """
     for key, value in shortcut_dict.items():
         if key.lower() == target_key.lower():
@@ -35,11 +41,62 @@ def get_value_case_insensitive(shortcut_dict: dict, target_key: str, default="")
     return default
 
 def normalize_appid(appid) -> str:
-    """Converts signed 32-bit integers to unsigned strings (e.g. -826632865 -> 3468334431)"""
-    if isinstance(appid, str):
-        try:
-            appid = int(appid)
-        except ValueError:
-            return appid
-    # Use bitmask to convert to unsigned 32-bit
-    return str(appid & 0xffffffff)
+    """Converts AppIDs (int or str) to unsigned strings (e.g. 3468334431)"""
+    if appid is None:
+        return "0"
+    try:
+        # Convert to int, then use bitmask to ensure it's a positive 32-bit value
+        val = int(appid)
+        return str(val & 0xffffffff)
+    except (ValueError, TypeError):
+        return str(appid)
+
+
+def add_new_shortcut(vdf_path, game_name, exe_path, icon_path=""):
+    """
+    Parses current VDF, appends a new entry, and saves it.
+    """
+    try:
+        data = load_shortcuts(vdf_path)
+        if "shortcuts" not in data:
+            data["shortcuts"] = {}
+
+        start_dir = os.path.dirname(exe_path)
+        unique_name = (exe_path + game_name).encode('utf-8')
+        
+        # Generate the ID exactly as the reference script does
+        unsigned_appid = zlib.crc32(unique_name) | 0x80000000
+        
+        # We store the appid as a STRING. 
+        # This prevents "i format" and "unpack" errors in the vdf library.
+        str_appid = str(unsigned_appid & 0xffffffff)
+
+        new_entry = {
+            "appid": str_appid,
+            "AppName": game_name,
+            "Exe": f'"{exe_path}"',
+            "StartDir": f'"{start_dir}\\"',
+            "icon": f'"{icon_path}"' if icon_path else "",
+            "ShortcutPath": "",
+            "LaunchOptions": "",
+            "IsHidden": 0,
+            "AllowDesktopConfig": 1,
+            "AllowOverlay": 1,
+            "OpenVR": 0,
+            "Devkit": 0,
+            "DevkitGameID": "",
+            "DevkitOverrideAppID": 0,
+            "LastPlayTime": 0,
+            "FlatpakAppID": "",
+            "tags": {}
+        }
+
+        # Find the next numeric index ('0', '1', '2'...)
+        next_idx = str(len(data["shortcuts"]))
+        data["shortcuts"][next_idx] = new_entry
+
+        save_shortcuts(vdf_path, data)
+        return True, "Shortcut added!", str_appid
+
+    except Exception as e:
+        return False, f"Error: {str(e)}", None
