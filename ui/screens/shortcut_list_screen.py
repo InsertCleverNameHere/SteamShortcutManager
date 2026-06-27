@@ -184,6 +184,10 @@ class ShortcutListScreen(QWidget):
         display_name = user_obj.persona_name or user_obj.userdata_id
         self.title_label.setText(f"{display_name}'s Library")
 
+        # Pre-scan the grid folder once to avoid O(N) disk hits in the loop
+        grid_dir = os.path.join(os.path.dirname(user_obj.shortcuts_path), "grid")
+        grid_files = set(os.listdir(grid_dir)) if os.path.isdir(grid_dir) else set()
+
         # Reset search state
         self.search_bar.clear()
         self._card_data = []
@@ -210,8 +214,13 @@ class ShortcutListScreen(QWidget):
                 exe_path = get_value_case_insensitive(s, "Exe", "No Path Found")
 
                 # 2. Check Assets
-                status = get_asset_status(user_obj.shortcuts_path, appid)
-                is_complete = all(exists for exists, path in status.values())
+                is_complete = (
+                    any(f"{appid}p{e}" in grid_files for e in (".jpg", ".png"))
+                    and any(f"{appid}{e}" in grid_files for e in (".jpg", ".png"))
+                    and any(f"{appid}_hero{e}" in grid_files for e in (".jpg", ".png"))
+                    and any(f"{appid}_logo{e}" in grid_files for e in (".png", ".jpg"))
+                    and f"{appid}.json" in grid_files
+                )
 
                 # 3. Build Card
                 card = QFrame()
