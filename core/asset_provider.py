@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+import threading
 from steam.client import SteamClient
 
 # The base URL for Steam's official assets
@@ -48,14 +49,40 @@ def download_assets(
             status_callback(msg)
 
     client = SteamClient()
+    login_timed_out = False
+
+    def watchdog():
+        nonlocal login_timed_out
+        login_timed_out = True
+        client.disconnect()
+
     try:
         report("🌐 [1/4] Connecting to Steam...")
-        if client.anonymous_login() != 1:
+
+        # Start 15-second watchdog timer
+        timer = threading.Timer(15.0, watchdog)
+        timer.start()
+        try:
+            login_result = client.anonymous_login()
+        finally:
+            timer.cancel()  # Ensure timer stops regardless of success/fail
+
+        if login_timed_out:
+            return False, "❌ Connection timed out (Steam servers may be slow)."
+
+        if login_result != 1:
             return False, "❌ Connection failed."
+
+        if login_timed_out:
+            return False, "❌ Operation aborted."  # Checkpoint 1
 
         report(f"📑 [2/4] Fetching manifest for {steam_appid}...")
         # AppIDs must be integers for the steam library lookup
         product_info = client.get_product_info(apps=[int(steam_appid)])
+
+        if login_timed_out:
+            return False, "❌ Operation aborted."  # Checkpoint 2
+
         app_data = product_info.get("apps", {}).get(int(steam_appid))
 
         if not app_data:
