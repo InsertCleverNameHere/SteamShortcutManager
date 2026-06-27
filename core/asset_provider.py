@@ -6,13 +6,14 @@ from steam.client import SteamClient
 # The base URL for Steam's official assets
 CDN_BASE = "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps"
 
+
 def search_steam_apps(query: str):
     """
     Queries Steam Store search to find a potential match for the name.
     Returns a dict with id, name, and thumbnail URL or None.
     """
     # Clean query: Replace hyphens/colons with spaces to help Steam's literal API
-    clean_query = query.replace('-', ' ').replace(':', ' ')
+    clean_query = query.replace("-", " ").replace(":", " ")
     url = f"https://store.steampowered.com/api/storesearch/?term={clean_query}&l=english&cc=US"
     try:
         r = requests.get(url, timeout=10)
@@ -22,16 +23,26 @@ def search_steam_apps(query: str):
             return {
                 "id": str(item.get("id")),
                 "name": item.get("name"),
-                "thumb_url": item.get("tiny_image")  # Corrected key from discovery script
+                "thumb_url": item.get(
+                    "tiny_image"
+                ),  # Corrected key from discovery script
             }
         return None
     except:
         return None
 
-def download_assets(steam_appid: str, local_appid: str, grid_dir: str, force: bool = False, status_callback=None):
+
+def download_assets(
+    steam_appid: str,
+    local_appid: str,
+    grid_dir: str,
+    force: bool = False,
+    status_callback=None,
+):
     """
     Fetches metadata and downloads assets. Reports progress via status_callback.
     """
+
     def report(msg):
         if status_callback:
             status_callback(msg)
@@ -45,27 +56,27 @@ def download_assets(steam_appid: str, local_appid: str, grid_dir: str, force: bo
         report(f"📑 [2/4] Fetching manifest for {steam_appid}...")
         # AppIDs must be integers for the steam library lookup
         product_info = client.get_product_info(apps=[int(steam_appid)])
-        app_data = product_info.get('apps', {}).get(int(steam_appid))
-        
+        app_data = product_info.get("apps", {}).get(int(steam_appid))
+
         if not app_data:
             return False, "❌ AppID not found on Steam."
 
-        common = app_data.get('common', {})
-        assets_full = common.get('library_assets_full', {})
-        assets_meta = common.get('library_assets', {})
+        common = app_data.get("common", {})
+        assets_full = common.get("library_assets_full", {})
+        assets_meta = common.get("library_assets", {})
 
         mapping = {
             "p": ("library_capsule", "library_600x900.jpg"),
             "": ("library_header", "header.jpg"),
             "_hero": ("library_hero", "library_hero.jpg"),
-            "_logo": ("library_logo", "logo.png")
+            "_logo": ("library_logo", "logo.png"),
         }
 
         downloaded_count = 0
         for suffix, (key, default_name) in mapping.items():
             asset_entry = assets_full.get(key, {})
-            img_hash_path = asset_entry.get('image', {}).get('english')
-            
+            img_hash_path = asset_entry.get("image", {}).get("english")
+
             if img_hash_path:
                 url = f"{CDN_BASE}/{steam_appid}/{img_hash_path}"
             else:
@@ -82,7 +93,7 @@ def download_assets(steam_appid: str, local_appid: str, grid_dir: str, force: bo
             report(f"📥 [3/4] Downloading {key.replace('library_', '')}...")
             res = requests.get(url, timeout=10)
             if res.status_code == 200:
-                with open(local_path, 'wb') as f:
+                with open(local_path, "wb") as f:
                     f.write(res.content)
                 downloaded_count += 1
 
@@ -90,18 +101,18 @@ def download_assets(steam_appid: str, local_appid: str, grid_dir: str, force: bo
         json_path = os.path.join(grid_dir, f"{local_appid}.json")
         if force or not os.path.exists(json_path):
             report(f"📝 [4/4] Generating positioning JSON...")
-            logo_pos = assets_meta.get('logo_position')
+            logo_pos = assets_meta.get("logo_position")
             if logo_pos:
                 json_data = {
                     "nVersion": 1,
                     "logoPosition": {
                         "pinnedPosition": logo_pos.get("pinned_position", "BottomLeft"),
                         "nWidthPct": float(logo_pos.get("width_pct", 50)),
-                        "nHeightPct": float(logo_pos.get("height_pct", 50))
-                    }
+                        "nHeightPct": float(logo_pos.get("height_pct", 50)),
+                    },
                 }
-                with open(json_path, 'w') as f:
-                    json.dump(json_data, f, separators=(',', ':'))
+                with open(json_path, "w") as f:
+                    json.dump(json_data, f, separators=(",", ":"))
                 downloaded_count += 1
 
         return True, f"✅ Successfully injected {downloaded_count} assets."
