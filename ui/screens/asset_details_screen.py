@@ -30,6 +30,7 @@ from ui.theme import PALETTE
 from core.steam import get_asset_status
 from core.asset_provider import download_assets, search_steam_apps
 from enum import Enum, auto
+from urllib.parse import urlparse
 
 
 class SearchState(Enum):
@@ -58,13 +59,21 @@ class SearchWorker(QObject):
                 if url.startswith("//"):
                     url = "https:" + url
 
-                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-                resp = requests.get(url, headers=headers, timeout=5)
-
-                if resp.status_code == 200:
-                    result["thumb_bytes"] = resp.content
-                else:
+                parsed = urlparse(url)
+                trusted_domains = (".steampowered.com", ".steamstatic.com")
+                if not parsed.netloc.endswith(trusted_domains):
+                    print(f"DEBUG: Blocked untrusted thumbnail URL: {url}")
                     result["thumb_bytes"] = None
+                else:
+                    headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                    }
+                    resp = requests.get(url, headers=headers, timeout=5)
+
+                    if resp.status_code == 200:
+                        result["thumb_bytes"] = resp.content
+                    else:
+                        result["thumb_bytes"] = None
             except Exception:
                 result["thumb_bytes"] = None
         self.finished.emit(result, self.query, self.generation)
