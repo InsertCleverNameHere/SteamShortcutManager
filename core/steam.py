@@ -16,10 +16,11 @@ DEFAULT_STEAM_PATHS = [
 @dataclass
 class SteamUserShortcuts:
     """Represents one discovered shortcuts.vdf file and its owning Steam user."""
-    userdata_id: str          # The numeric folder name under userdata/
-    steam_id64: Optional[str] # Full 64-bit Steam ID if resolvable
+
+    userdata_id: str  # The numeric folder name under userdata/
+    steam_id64: Optional[str]  # Full 64-bit Steam ID if resolvable
     persona_name: Optional[str]
-    shortcuts_path: str       # Full path to shortcuts.vdf
+    shortcuts_path: str  # Full path to shortcuts.vdf
     shortcut_count: int
     avatar_path: Optional[str] = None  # Path to locally cached avatar, if found
 
@@ -60,7 +61,8 @@ def get_persona_name(steam_dir: str, steamid64: str) -> Optional[str]:
         users = data.get("users", {})
         user = users.get(steamid64, {})
         return user.get("PersonaName") or user.get("AccountName") or None
-    except Exception:
+    except Exception as e:
+        print(f"DEBUG: Persona lookup error: {e}")
         return None
 
 
@@ -88,7 +90,8 @@ def count_shortcuts(shortcuts_path: str) -> int:
         with open(shortcuts_path, "rb") as f:
             data = vdf.binary_load(f)
         return len(data.get("shortcuts", {}))
-    except Exception:
+    except Exception as e:
+        print(f"DEBUG: VDF Parse error in {shortcuts_path}: {e}")
         return 0
 
 
@@ -116,17 +119,19 @@ def find_shortcuts(steam_dir: str) -> list[SteamUserShortcuts]:
         avatar = get_avatar_path(steam_dir, steamid64)
         count = count_shortcuts(shortcuts_path)
 
-        results.append(SteamUserShortcuts(
-            userdata_id=entry,
-            steam_id64=steamid64,
-            persona_name=persona,
-            shortcuts_path=shortcuts_path,
-            shortcut_count=count,
-            avatar_path=avatar,
-        ))
-        
+        results.append(
+            SteamUserShortcuts(
+                userdata_id=entry,
+                steam_id64=steamid64,
+                persona_name=persona,
+                shortcuts_path=shortcuts_path,
+                shortcut_count=count,
+                avatar_path=avatar,
+            )
+        )
 
     return results
+
 
 def get_asset_status(shortcuts_vdf_path: str, appid: str) -> dict:
     """
@@ -134,17 +139,17 @@ def get_asset_status(shortcuts_vdf_path: str, appid: str) -> dict:
     Returns a dict: { 'type': (exists: bool, path: str) }
     """
     grid_dir = os.path.join(os.path.dirname(shortcuts_vdf_path), "grid")
-    
+
     # Define patterns to check. We check for .jpg then .png for images.
     # For JSON, it is strictly .json.
     patterns = {
         "capsule": [f"{appid}p.jpg", f"{appid}p.png"],
-        "header":  [f"{appid}.jpg", f"{appid}.png"],
-        "hero":    [f"{appid}_hero.jpg", f"{appid}_hero.png"],
-        "logo":    [f"{appid}_logo.png", f"{appid}_logo.jpg"],
-        "json":    [f"{appid}.json"]
+        "header": [f"{appid}.jpg", f"{appid}.png"],
+        "hero": [f"{appid}_hero.jpg", f"{appid}_hero.png"],
+        "logo": [f"{appid}_logo.png", f"{appid}_logo.jpg"],
+        "json": [f"{appid}.json"],
     }
-    
+
     status = {}
     for key, filenames in patterns.items():
         found_path = None
@@ -154,5 +159,5 @@ def get_asset_status(shortcuts_vdf_path: str, appid: str) -> dict:
                 found_path = full_path
                 break
         status[key] = (found_path is not None, found_path)
-        
+
     return status

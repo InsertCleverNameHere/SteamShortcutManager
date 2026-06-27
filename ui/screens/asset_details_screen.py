@@ -74,7 +74,8 @@ class SearchWorker(QObject):
                         result["thumb_bytes"] = resp.content
                     else:
                         result["thumb_bytes"] = None
-            except Exception:
+            except Exception as e:
+                print(f"DEBUG: Thumbnail download error: {e}")
                 result["thumb_bytes"] = None
         self.finished.emit(result, self.query, self.generation)
 
@@ -601,7 +602,8 @@ class AssetDetailsScreen(QWidget):
             try:
                 # Disconnect UI slots so the old thread cannot update this screen
                 self._search_thread.worker.finished.disconnect(self._on_search_finished)
-            except (AttributeError, TypeError, RuntimeError):
+            except (AttributeError, TypeError, RuntimeError) as e:
+                print(f"DEBUG: Signal disconnect error: {e}")
                 pass
             # Move to registry so Python doesn't delete the C++ object mid-run
             AssetDetailsScreen._active_threads.add(self._search_thread)
@@ -678,8 +680,8 @@ class AssetDetailsScreen(QWidget):
                         if os.path.exists(target_file):
                             try:
                                 os.remove(target_file)
-                            except:
-                                pass
+                            except Exception as e:
+                                print(f"DEBUG: Could not delete {target_file}: {e}")
 
             # 6. Finalize and Exit
             self.name_changed.emit()  # Refresh the main list
@@ -722,8 +724,8 @@ class AssetDetailsScreen(QWidget):
                 if os.path.exists(potential_old_file):
                     try:
                         os.remove(potential_old_file)
-                    except:
-                        pass  # Ignore errors if file is locked
+                    except Exception as e:
+                        print(f"DEBUG: Could not remove old asset: {e}")
             # 3. Copy and Overwrite
             shutil.copy2(file_path, dest_path)
 

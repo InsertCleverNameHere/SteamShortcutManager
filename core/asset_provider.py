@@ -30,7 +30,8 @@ def search_steam_apps(query: str):
                 ),  # Corrected key from discovery script
             }
         return None
-    except:
+    except Exception as e:
+        print(f"DEBUG: Steam  Search error: {e}")
         return None
 
 
@@ -162,6 +163,7 @@ def download_assets(
         return True, f"✅ Successfully injected {downloaded_count} assets."
 
     except Exception as e:
+        print(f"DEBUG: Global Download Error: {e}")
         return False, str(e)
     finally:
         client.disconnect()

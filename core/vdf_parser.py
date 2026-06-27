@@ -16,7 +16,8 @@ def load_shortcuts(path: str) -> dict:
     try:
         with open(path, "rb") as f:
             return vdf.binary_load(f)
-    except Exception:
+    except Exception as e:
+        print(f"DEBUG: VDF Load error at {path}: {e}")
         # If the file is corrupted, return an empty structure to prevent crashes
         return {"shortcuts": {}}
 
