@@ -132,7 +132,7 @@ class ShortcutListScreen(QWidget):
             self,
             "Select Game",
             "",
-            "Games & Shortcuts (*.exe *.lnk);;All Files (*.*)",
+            "Games (*.exe *.lnk);;All Files (*.*)",
         )
         if not raw_path:
             return
