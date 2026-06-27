@@ -326,14 +326,16 @@ class AssetDetailsScreen(QWidget):
             self.status_label.setText("✅ All assets present")
 
         # 1. Animate Inject Button Opacity
-        self.btn_anim = QPropertyAnimation(self.btn_opacity_effect, b"opacity")
+        self.btn_anim = QPropertyAnimation(self.btn_opacity_effect, b"opacity", self)
         self.btn_anim.setDuration(250)  # milliseconds
         self.btn_anim.setEndValue(target_btn_opacity)
         self.btn_anim.setEasingCurve(QEasingCurve.InOutQuad)
         self.btn_anim.start()
 
         # 2. Animate Status Label Opacity
-        self.status_anim = QPropertyAnimation(self.status_opacity_effect, b"opacity")
+        self.status_anim = QPropertyAnimation(
+            self.status_opacity_effect, b"opacity", self
+        )
         self.status_anim.setDuration(250)
         self.status_anim.setEndValue(target_status_opacity)
         self.status_anim.setEasingCurve(QEasingCurve.InOutQuad)
