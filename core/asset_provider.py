@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import threading
+import time
 from steam.client import SteamClient
 
 # The base URL for Steam's official assets
@@ -119,11 +120,26 @@ def download_assets(
                 continue
 
             report(f"📥 [3/4] Downloading {key.replace('library_', '')}...")
-            res = requests.get(url, timeout=10)
-            if res.status_code == 200:
-                with open(local_path, "wb") as f:
-                    f.write(res.content)
-                downloaded_count += 1
+            download_success = False
+            for attempt in range(2):
+                try:
+                    res = requests.get(url, timeout=15)
+                    if res.status_code == 200:
+                        with open(local_path, "wb") as f:
+                            f.write(res.content)
+                        downloaded_count += 1
+                        download_success = True
+                        break  # Exit retry loop on success
+                except requests.exceptions.RequestException:
+                    pass  # Let it retry or fail gracefully
+
+                if attempt == 0:  # If first attempt failed, wait briefly
+                    import time
+
+                    time.sleep(1)
+
+            if not download_success:
+                report(f"⚠️ Skipping {key.replace('library_', '')}: Download failed")
 
         # Handle JSON positioning
         json_path = os.path.join(grid_dir, f"{local_appid}.json")
