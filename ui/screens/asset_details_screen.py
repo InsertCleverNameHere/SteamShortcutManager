@@ -29,6 +29,14 @@ from PySide6.QtCore import (
 from ui.theme import PALETTE
 from core.steam import get_asset_status
 from core.asset_provider import download_assets, search_steam_apps
+from enum import Enum, auto
+
+
+class SearchState(Enum):
+    IDLE = auto()
+    SEARCHING = auto()
+    FOUND = auto()
+    NOT_FOUND = auto()
 
 
 class SearchWorker(QObject):
@@ -134,6 +142,7 @@ class AssetDetailsScreen(QWidget):
         self._current_shortcuts_path = ""
         self._current_name = ""
         self._search_generation = 0
+        self._search_state = SearchState.IDLE
         self._all_assets_present = False
         self._build_ui()
 
@@ -295,31 +304,25 @@ class AssetDetailsScreen(QWidget):
         self.btn_opacity_effect.setOpacity(1.0)
 
     def _update_button_state(self):
-        """Animates button and label states based on asset presence and checkbox."""
+        """Animates button and label states based on asset and search state."""
         can_inject = not self._all_assets_present or self.force_cb.isChecked()
-
-        # Determine target opacities
         target_btn_opacity = 1.0 if can_inject else 0.3
 
-        # The label should be visible if:
-        # 1. Assets are all present (and we aren't forcing)
-        # 2. OR the label currently contains search/match text
-        has_search_text = (
-            "Searching" in self.status_label.text()
-            or "match" in self.status_label.text()
-        )
+        # Use the Enum instead of probing label text
+        is_searching = self._search_state == SearchState.SEARCHING
+        is_matched = self._search_state == SearchState.FOUND
+
         show_status = (
-            self._all_assets_present and not self.force_cb.isChecked()
-        ) or has_search_text
+            (self._all_assets_present and not self.force_cb.isChecked())
+            or is_searching
+            or is_matched
+        )
 
         target_status_opacity = 1.0 if show_status else 0.0
 
-        # Only show 'All assets present' if we aren't currently searching or connecting
-        is_busy = (self._search_thread and self._search_thread.isRunning()) or (
-            self._thread and self._thread.isRunning()
-        )
-
-        if show_status and not is_busy:
+        # Only update text if we aren't in a searching/found state
+        # (those states manage their own text)
+        if show_status and self._search_state == SearchState.IDLE:
             self.status_label.setText("✅ All assets present")
 
         # 1. Animate Inject Button Opacity
@@ -406,6 +409,7 @@ class AssetDetailsScreen(QWidget):
             return
 
         if result:
+            self._search_state = SearchState.FOUND
             self._suggested_steam_id = result["id"]
             self.suggestion_text.setText(f"MATCH: {result['id']}")
 
@@ -417,7 +421,7 @@ class AssetDetailsScreen(QWidget):
                 else:
                     self.suggestion_thumb.hide()
 
-            # Use self as parent to prevent GC mid-animation (Phase 3 preview)
+            # Use self as parent to prevent GC mid-animation
             self.suggest_anim = QPropertyAnimation(
                 self.suggestion_opacity, b"opacity", self
             )
@@ -428,8 +432,11 @@ class AssetDetailsScreen(QWidget):
 
             self.status_label.setText(f"💡 Found Steam Match")
         else:
+            self._search_state = SearchState.NOT_FOUND
             self._suggested_steam_id = None
             self.status_label.setText("❓ No match found")
+        # Refresh visibility now that state changed
+        self._update_button_state
 
     def load_assets(self, game_name, shortcuts_path, appid):
         # 1. Improved new game detection with string conversion
@@ -573,6 +580,7 @@ class AssetDetailsScreen(QWidget):
             # Move to registry so Python doesn't delete the C++ object mid-run
             AssetDetailsScreen._active_threads.add(self._search_thread)
 
+        self._sears = SearchState.SEARCHING
         self._search_generation += 1
         current_gen = self._search_generation
         self.status_opacity_effect.setOpacity(1.0)
