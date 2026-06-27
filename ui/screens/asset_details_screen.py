@@ -95,6 +95,66 @@ class DownloadWorker(QObject):
         self.finished.emit(success, message, self.local_id)
 
 
+class AssetSlot(QWidget):
+    """A persistent widget representing a single asset (Capsule, Hero, etc.)."""
+
+    manual_upload_requested = Signal(str)
+
+    def __init__(self, key, parent=None):
+        super().__init__(parent)
+        self.key = key
+        self.setFixedWidth(320)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip(f"Click to manually upload {key.upper()}")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        layout.setAlignment(Qt.AlignTop)
+
+        self.title_label = QLabel(key.upper())
+        self.title_label.setStyleSheet(
+            f"font-size: 12px; font-weight: 900; letter-spacing: 1.5px; color: {PALETTE['accent']}; background: transparent;"
+        )
+        layout.addWidget(self.title_label)
+
+        self.content_label = QLabel()
+        self.content_label.setMinimumHeight(160)
+        self.content_label.setAlignment(Qt.AlignTop)
+        layout.addWidget(self.content_label)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.manual_upload_requested.emit(self.key)
+
+    def update_slot(self, exists, path):
+        """Updates the content without recreating the widget."""
+        if exists:
+            if self.key == "json":
+                self.content_label.setPixmap(QPixmap())
+                self.content_label.setText("✓ Position Data Found")
+                self.content_label.setStyleSheet(
+                    f"color: {PALETTE['success']}; font-size: 14px; font-weight: bold; background: transparent;"
+                )
+            else:
+                pix = QPixmap(path)
+                if not pix.isNull():
+                    self.content_label.setPixmap(
+                        pix.scaled(
+                            320, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                        )
+                    )
+                self.content_label.setText("")
+                self.content_label.setStyleSheet("background: transparent;")
+        else:
+            self.content_label.setPixmap(QPixmap())
+            self.content_label.setText("× Missing")
+            self.content_label.setStyleSheet(
+                f"color: {PALETTE['danger']}; font-size: 14px; font-weight: bold; background: transparent;"
+            )
+
+
 class AssetDetailsScreen(QWidget):
     back_requested = Signal()
     name_changed = Signal()
@@ -289,6 +349,23 @@ class AssetDetailsScreen(QWidget):
         self.grid.setSpacing(0)
         self.grid.setColumnStretch(0, 1)
         self.grid.setColumnStretch(1, 1)
+        # Initialize persistent slots
+        self._asset_slots = {}
+        positions = {
+            "capsule": (0, 0),
+            "header": (0, 1),
+            "hero": (1, 0),
+            "logo": (1, 1),
+            "json": (2, 0),
+        }
+
+        for key, (row, col) in positions.items():
+            slot = AssetSlot(key)
+            slot.manual_upload_requested.connect(self._on_manual_upload)
+            self._asset_slots[key] = slot
+            alignment = Qt.AlignLeft if col == 0 else Qt.AlignRight
+            self.grid.addWidget(slot, row, col, alignment | Qt.AlignTop)
+
         self.main_layout.addLayout(self.grid)
         self.main_layout.addStretch()
 
@@ -440,7 +517,7 @@ class AssetDetailsScreen(QWidget):
             self._suggested_steam_id = None
             self.status_label.setText("❓ No match found")
         # Refresh visibility now that state changed
-        self._update_button_state
+        self._update_button_state()
 
     def load_assets(self, game_name, shortcuts_path, appid):
         # 1. Improved new game detection with string conversion
@@ -455,78 +532,14 @@ class AssetDetailsScreen(QWidget):
         if is_new_game:
             self._trigger_search(game_name)
 
-        while self.grid.count():
-            item = self.grid.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-
         status = get_asset_status(shortcuts_path, appid)
         self._all_assets_present = all(exists for exists, path in status.values())
-        self._update_button_state()
-
-        positions = {
-            "capsule": (0, 0),
-            "header": (0, 1),
-            "hero": (1, 0),
-            "logo": (1, 1),
-            "json": (2, 0),
-        }
 
         for key, (exists, path) in status.items():
-            container = QWidget()
-            container.setFixedWidth(320)
-            container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            if key in self._asset_slots:
+                self._asset_slots[key].update_slot(exists, path)
 
-            # Manual Upload
-            container.setCursor(Qt.PointingHandCursor)
-            container.setToolTip(f"Click to manually  upload {key.upper()}")
-            # User a closure to capture the current 'key'
-            container.mousePressEvent = lambda e, k=key: self._on_manual_upload(k)
-
-            container_layout = QVBoxLayout(container)
-            container_layout.setContentsMargins(0, 0, 0, 0)
-            container_layout.setSpacing(10)
-            container_layout.setAlignment(Qt.AlignTop)
-
-            label = QLabel(key.upper())
-            label.setStyleSheet(
-                f"font-size: 12px; font-weight: 900; letter-spacing: 1.5px; color: {PALETTE['accent']}; background: transparent;"
-            )
-            container_layout.addWidget(label)
-
-            if exists and key != "json":
-                img_label = QLabel()
-                pix = QPixmap(path)
-                if not pix.isNull():
-                    scaled_pix = pix.scaled(
-                        320, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation
-                    )
-                    img_label.setPixmap(scaled_pix)
-
-                img_label.setStyleSheet("background: transparent;")
-                img_label.setMinimumHeight(160)
-                container_layout.addWidget(img_label)
-            elif exists and key == "json":
-                json_lbl = QLabel("✓ Position Data Found")
-                json_lbl.setStyleSheet(
-                    f"color: {PALETTE['success']}; font-size: 14px; font-weight: bold; background: transparent;"
-                )
-                container_layout.addWidget(json_lbl)
-            else:
-                msg = QLabel("× Missing")
-                msg.setStyleSheet(
-                    f"color: {PALETTE['danger']}; font-size: 14px; font-weight: bold; background: transparent;"
-                )
-                msg.setMinimumHeight(160)
-                msg.setAlignment(Qt.AlignTop)
-                container_layout.addWidget(msg)
-
-            row, col = positions[key]
-            # Column 0 (Capsule/Hero) sticks Left.
-            # Column 1 (Header/Logo) sticks Right.
-            alignment = Qt.AlignLeft if col == 0 else Qt.AlignRight
-            self.grid.addWidget(container, row, col, alignment | Qt.AlignTop)
+        self._update_button_state()
 
     def _toggle_edit_name(self):
         import shutil
@@ -578,13 +591,13 @@ class AssetDetailsScreen(QWidget):
         if self._search_thread and self._search_thread.isRunning():
             try:
                 # Disconnect UI slots so the old thread cannot update this screen
-                self._search_thread.finished.disconnect(self._on_search_finished)
-            except (TypeError, RuntimeError):
+                self._search_thread.worker.finished.disconnect(self._on_search_finished)
+            except (AttributeError, TypeError, RuntimeError):
                 pass
             # Move to registry so Python doesn't delete the C++ object mid-run
             AssetDetailsScreen._active_threads.add(self._search_thread)
 
-        self._sears = SearchState.SEARCHING
+        self._search_state = SearchState.SEARCHING
         self._search_generation += 1
         current_gen = self._search_generation
         self.status_opacity_effect.setOpacity(1.0)
