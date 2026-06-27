@@ -150,7 +150,7 @@ class LibraryScreen(QWidget):
     def _on_card_selected(self, user: SteamUserShortcuts):
         self._selected_user = user
         for card in self._cards:
-            card.set_selected(card._user is user)
+            card.set_selected(card.user is user)
         self._open_btn.setEnabled(True)
 
     def _on_open(self):

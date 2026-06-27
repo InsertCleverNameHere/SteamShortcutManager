@@ -84,6 +84,11 @@ class UserCard(QFrame):
 
     selected = Signal(object)  # SteamUserShortcuts
 
+    @property
+    def user(self) -> SteamUserShortcuts:
+        """Expose the user data associated with this card."""
+        return self._user
+
     def __init__(self, user: SteamUserShortcuts, parent=None):
         super().__init__(parent)
         self._user = user
