@@ -26,6 +26,7 @@ from PySide6.QtCore import (
     QPropertyAnimation,
     QEasingCurve,
 )
+from core.vdf_parser import update_shortcut_name, delete_shortcut
 from ui.theme import PALETTE
 from core.steam import get_asset_status
 from core.asset_provider import download_assets, search_steam_apps
@@ -53,6 +54,7 @@ class SearchWorker(QObject):
     def run(self):
         """Perform the search and thumbnail download."""
         result = search_steam_apps(self.query)
+
         if isinstance(result, dict) and result.get("thumb_url"):
             try:
                 url = result["thumb_url"]
@@ -560,8 +562,6 @@ class AssetDetailsScreen(QWidget):
         self._update_button_state()
 
     def _toggle_edit_name(self):
-        import shutil
-        from core.vdf_parser import update_shortcut_name
 
         # Case: Transitioning from View to Edit
         if not self.title_edit.isVisible():
@@ -644,8 +644,6 @@ class AssetDetailsScreen(QWidget):
         self._search_thread.start()
 
     def _on_delete_clicked(self):
-        import shutil
-        from core.vdf_parser import delete_shortcut
 
         # 1. Primary Confirmation
         reply = QMessageBox.question(
