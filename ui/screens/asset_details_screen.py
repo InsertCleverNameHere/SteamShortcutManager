@@ -34,11 +34,12 @@ from core.asset_provider import download_assets, search_steam_apps
 class SearchWorker(QObject):
     """Fetches a potential AppID match and its thumbnail in the background."""
 
-    finished = Signal(object, str)
+    finished = Signal(object, str, int)
 
-    def __init__(self, query):
+    def __init__(self, query, generation):
         super().__init__()
         self.query = query
+        self.generation = generation
 
     def run(self):
         """Perform the search and thumbnail download."""
@@ -58,7 +59,7 @@ class SearchWorker(QObject):
                     result["thumb_bytes"] = None
             except Exception:
                 result["thumb_bytes"] = None
-        self.finished.emit(result, self.query)
+        self.finished.emit(result, self.query, self.generation)
 
 
 class DownloadWorker(QObject):
@@ -90,6 +91,8 @@ class AssetDetailsScreen(QWidget):
     back_requested = Signal()
     name_changed = Signal()
 
+    _active_threads = set()
+
     def _set_busy(self, is_busy: bool):
         """Atomically enables or disables controls with visual feedback."""
         # is_busy=True means UI is locked
@@ -112,9 +115,13 @@ class AssetDetailsScreen(QWidget):
         """Safely clears the thread reference after it is deleted."""
         self._thread = None
 
-    def _on_search_thread_finished(self):
-        """Safely clears the search thread reference."""
-        self._search_thread = None
+    def _on_search_thread_finished(self, thread_instance):
+        """Removes a thread from the registry once it has safely finished."""
+        if thread_instance in AssetDetailsScreen._active_threads:
+            AssetDetailsScreen._active_threads.remove(thread_instance)
+
+        if self._search_thread == thread_instance:
+            self._search_thread = None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -126,6 +133,7 @@ class AssetDetailsScreen(QWidget):
         self._current_appid = None
         self._current_shortcuts_path = ""
         self._current_name = ""
+        self._search_generation = 0
         self._all_assets_present = False
         self._build_ui()
 
@@ -391,11 +399,10 @@ class AssetDetailsScreen(QWidget):
         else:
             QMessageBox.critical(self, "Error", message)
 
-    def _on_search_finished(self, result, original_query):
+    def _on_search_finished(self, result, original_query, generation):
         """Populates and fades in the smart suggestion bar."""
-
-        # Verify the search query still matches the current game
-        if original_query != self._current_name:
+        # Guard: If this is an orphaned result, ignore it
+        if generation != self._search_generation:
             return
 
         if result:
@@ -409,21 +416,19 @@ class AssetDetailsScreen(QWidget):
                     self.suggestion_thumb.show()
                 else:
                     self.suggestion_thumb.hide()
-            else:
-                self.suggestion_thumb.hide()
 
-            # Trigger fade-in animation
-            self.suggest_anim = QPropertyAnimation(self.suggestion_opacity, b"opacity")
+            # Use self as parent to prevent GC mid-animation (Phase 3 preview)
+            self.suggest_anim = QPropertyAnimation(
+                self.suggestion_opacity, b"opacity", self
+            )
             self.suggest_anim.setDuration(400)
             self.suggest_anim.setEndValue(1.0)
             self.suggest_anim.setEasingCurve(QEasingCurve.OutQuad)
             self.suggest_anim.start()
 
-            # Update status label to show we found something
             self.status_label.setText(f"💡 Found Steam Match")
         else:
             self._suggested_steam_id = None
-            self.suggestion_opacity.setOpacity(0.0)
             self.status_label.setText("❓ No match found")
 
     def load_assets(self, game_name, shortcuts_path, appid):
@@ -550,30 +555,48 @@ class AssetDetailsScreen(QWidget):
 
     def _trigger_search(self, game_name):
         """Triggers a background Steam search for the given name."""
-        if self._search_thread is not None:
-            try:
-                if self._search_thread.isRunning():
-                    self._search_thread.quit()
-                    self._search_thread.wait()
-            except:
-                pass
-
+        # Visual/Animation Reset
+        if hasattr(self, "suggest_anim"):
+            self.suggest_anim.stop()
         self.suggestion_opacity.setOpacity(0.0)
         self.suggestion_text.setText("")
+        self.suggestion_thumb.setPixmap(QPixmap())
         self._suggested_steam_id = None
 
+        # Thread Management: Handle existing search task
+        if self._search_thread and self._search_thread.isRunning():
+            try:
+                # Disconnect UI slots so the old thread cannot update this screen
+                self._search_thread.finished.disconnect(self._on_search_finished)
+            except (TypeError, RuntimeError):
+                pass
+            # Move to registry so Python doesn't delete the C++ object mid-run
+            AssetDetailsScreen._active_threads.add(self._search_thread)
+
+        self._search_generation += 1
+        current_gen = self._search_generation
         self.status_opacity_effect.setOpacity(1.0)
         self.status_label.setText("🔍 Searching Steam...")
 
-        self._search_thread = QThread()
-        self._search_worker = SearchWorker(game_name)
-        self._search_worker.moveToThread(self._search_thread)
-        self._search_thread.started.connect(self._search_worker.run)
-        self._search_worker.finished.connect(self._on_search_finished)
-        self._search_worker.finished.connect(self._search_thread.quit)
-        self._search_worker.finished.connect(self._search_worker.deleteLater)
-        self._search_thread.finished.connect(self._on_search_thread_finished)
-        self._search_thread.finished.connect(self._search_thread.deleteLater)
+        # Create the new thread and worker
+        new_thread = QThread()
+        worker = SearchWorker(game_name, current_gen)
+        new_thread.worker = worker
+        worker.moveToThread(new_thread)
+
+        new_thread.started.connect(worker.run)
+        worker.finished.connect(self._on_search_finished)
+        worker.finished.connect(new_thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        new_thread.finished.connect(new_thread.deleteLater)
+
+        # Cleanup: Remove from registry and clear reference on finish
+        new_thread.finished.connect(
+            lambda t=new_thread: self._on_search_thread_finished(t)
+        )
+        AssetDetailsScreen._active_threads.add(new_thread)
+
+        self._search_thread = new_thread
         self._search_thread.start()
 
     def _on_delete_clicked(self):
