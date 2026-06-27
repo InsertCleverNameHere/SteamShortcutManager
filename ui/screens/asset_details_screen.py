@@ -399,6 +399,8 @@ class AssetDetailsScreen(QWidget):
             self.load_assets(
                 self._current_name, self._current_shortcuts_path, self._current_appid
             )
+            # Refresh Missing assets badges on new shortcut added
+            self.name_changed.emit()
         else:
             QMessageBox.critical(self, "Error", message)
 

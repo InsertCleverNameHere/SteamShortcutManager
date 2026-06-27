@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QSizePolicy,
 )
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer, QObject, QThread
 from ui.theme import PALETTE
 from core.vdf_parser import (
     load_shortcuts,
@@ -24,6 +24,26 @@ from core.vdf_parser import (
 )
 from core.steam import get_asset_status
 from core.utils_win import resolve_windows_shortcut, get_game_name_from_metadata
+
+
+class AddShortcutWorker(QObject):
+    """Resolves file metadata in the background to prevent UI lag."""
+
+    finished = Signal(str, str, str)  # (raw_path, exe_path, derived_name)
+
+    def __init__(self, raw_path):
+        super().__init__()
+        self.raw_path = raw_path
+
+    def run(self):
+        file_label = os.path.splitext(os.path.basename(self.raw_path))[0]
+        if self.raw_path.lower().endswith(".lnk"):
+            exe_path = resolve_windows_shortcut(self.raw_path)
+            derived_name = file_label
+        else:
+            exe_path = self.raw_path
+            derived_name = get_game_name_from_metadata(exe_path)
+        self.finished.emit(self.raw_path, exe_path, derived_name)
 
 
 class ShortcutListScreen(QWidget):
@@ -110,28 +130,28 @@ class ShortcutListScreen(QWidget):
     def _on_add_clicked(self):
         raw_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Select Game or Shortcut",
+            "Select Game",
             "",
             "Games & Shortcuts (*.exe *.lnk);;All Files (*.*)",
         )
         if not raw_path:
             return
 
-        # Get the name of the file the user actually clicked on (e.g. "Hades.lnk" -> "Hades")
-        file_label = os.path.splitext(os.path.basename(raw_path))[0]
+        # Start background resolution
+        self._add_thread = QThread()
+        self._add_worker = AddShortcutWorker(raw_path)
+        self._add_worker.moveToThread(self._add_thread)
 
-        if raw_path.lower().endswith(".lnk"):
-            # PATH: Resolve the shortcut to find the real EXE
-            exe_path = resolve_windows_shortcut(raw_path)
-            # NAME: Trust the shortcut's filename over the EXE metadata
-            derived_name = file_label
-        else:
-            # PATH: It is the EXE
-            exe_path = raw_path
-            # NAME: Try metadata, fallback to filename
-            derived_name = get_game_name_from_metadata(exe_path)
+        self._add_thread.started.connect(self._add_worker.run)
+        self._add_worker.finished.connect(self._on_shortcut_resolved)
+        self._add_worker.finished.connect(self._add_thread.quit)
+        self._add_worker.finished.connect(self._add_worker.deleteLater)
+        self._add_thread.finished.connect(self._add_thread.deleteLater)
 
-        # Prompt user (pre-filled with our best guess)
+        self._add_thread.start()
+
+    def _on_shortcut_resolved(self, raw_path, exe_path, derived_name):
+        """Continues the Add Shortcut flow after background resolution."""
         game_name, ok = QInputDialog.getText(
             self, "Add Shortcut", "Enter game name:", text=derived_name
         )
@@ -139,7 +159,7 @@ class ShortcutListScreen(QWidget):
         if ok and game_name:
             vdf_path = self._current_user_obj.shortcuts_path
 
-            # Automated Backup before writing
+            # Automated Backup
             if os.path.exists(vdf_path):
                 import shutil
 
@@ -151,12 +171,7 @@ class ShortcutListScreen(QWidget):
             )
 
             if success:
-                # 1. Refresh the internal list data
                 self.load_user_shortcuts(self._current_user_obj)
-
-                # 2. SURGICAL CHANGE: Redirect to the Detail Screen
-                # This triggers load_assets in the details screen, which
-                # automatically starts the background search for the user.
                 self.shortcut_clicked.emit(game_name, vdf_path, new_id)
             else:
                 QMessageBox.critical(self, "Error", msg)
