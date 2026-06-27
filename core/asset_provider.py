@@ -19,20 +19,19 @@ def search_steam_apps(query: str):
     url = f"https://store.steampowered.com/api/storesearch/?term={clean_query}&l=english&cc=US"
     try:
         r = requests.get(url, timeout=10)
+        r.raise_for_status()
         data = r.json()
         if data.get("total", 0) > 0:
             item = data["items"][0]
             return {
                 "id": str(item.get("id")),
                 "name": item.get("name"),
-                "thumb_url": item.get(
-                    "tiny_image"
-                ),  # Corrected key from discovery script
+                "thumb_url": item.get("tiny_image"),
             }
-        return None
-    except Exception as e:
-        print(f"DEBUG: Steam  Search error: {e}")
-        return None
+        return None  # No results found (successfully queried)
+    except (requests.RequestException, ValueError) as e:
+        print(f"DEBUG: Steam Store Search error: {e}")
+        return "ERR_NETWORK"  # Specific error indicator
 
 
 def download_assets(

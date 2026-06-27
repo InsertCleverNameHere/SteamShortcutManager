@@ -53,7 +53,7 @@ class SearchWorker(QObject):
     def run(self):
         """Perform the search and thumbnail download."""
         result = search_steam_apps(self.query)
-        if result and result.get("thumb_url"):
+        if isinstance(result, dict) and result.get("thumb_url"):
             try:
                 url = result["thumb_url"]
                 if url.startswith("//"):
@@ -76,7 +76,10 @@ class SearchWorker(QObject):
                         result["thumb_bytes"] = None
             except Exception as e:
                 print(f"DEBUG: Thumbnail download error: {e}")
-                result["thumb_bytes"] = None
+                # Use .get() or check type before setting to be safe
+                if isinstance(result, dict):
+                    result["thumb_bytes"] = None
+
         self.finished.emit(result, self.query, self.generation)
 
 
@@ -499,7 +502,7 @@ class AssetDetailsScreen(QWidget):
         if generation != self._search_generation:
             return
 
-        if result:
+        if isinstance(result, dict):
             self._search_state = SearchState.FOUND
             self._suggested_steam_id = result["id"]
             self.suggestion_text.setText(f"MATCH: {result['id']}")
@@ -522,6 +525,11 @@ class AssetDetailsScreen(QWidget):
             self.suggest_anim.start()
 
             self.status_label.setText(f"💡 Found Steam Match")
+        elif result == "ERR_NETWORK":
+            self._search_state = SearchState.NOT_FOUND
+            self._suggested_steam_id = None
+            self.status_label.setText("🌐 Search failed - check connection")
+
         else:
             self._search_state = SearchState.NOT_FOUND
             self._suggested_steam_id = None
