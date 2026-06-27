@@ -45,7 +45,7 @@ class MainWindow(QMainWindow):
         self.asset_screen.back_requested.connect(self.on_back_from_details)
         self.asset_screen.name_changed.connect(
             lambda: self.shortcut_screen.load_user_shortcuts(
-                self.shortcut_screen._current_user_obj
+                self.shortcut_screen.current_user
             )
         )
 

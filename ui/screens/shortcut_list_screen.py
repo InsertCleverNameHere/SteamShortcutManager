@@ -51,6 +51,11 @@ class ShortcutListScreen(QWidget):
     back_requested = Signal()
     shortcut_clicked = Signal(str, str, str)  # (game_name, shortcuts_path, appid)
 
+    @property
+    def current_user(self):
+        """Public accessor for the currently loaded Steam user."""
+        return self._current_user_obj
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._card_data = []  # Track widgets and names for filtering
