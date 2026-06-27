@@ -1,6 +1,5 @@
 import sys
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
-
 from ui.theme import APP_STYLESHEET
 from ui.screens.setup_screen import SetupScreen
 from ui.screens.library_screen import LibraryScreen

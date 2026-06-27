@@ -1,3 +1,4 @@
+import shutil
 import os
 from PySide6.QtWidgets import (
     QWidget,
@@ -161,8 +162,6 @@ class ShortcutListScreen(QWidget):
 
             # Automated Backup
             if os.path.exists(vdf_path):
-                import shutil
-
                 shutil.copy2(vdf_path, vdf_path + ".bak")
 
             # Save to VDF

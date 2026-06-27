@@ -134,8 +134,6 @@ def download_assets(
                     pass  # Let it retry or fail gracefully
 
                 if attempt == 0:  # If first attempt failed, wait briefly
-                    import time
-
                     time.sleep(1)
 
             if not download_success:
