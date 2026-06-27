@@ -5,21 +5,21 @@ clean Inter/system sans-serif throughout.
 """
 
 PALETTE = {
-    "bg_deep":      "#0f1114",
-    "bg_surface":   "#1a1d23",
-    "bg_card":      "#21252e",
-    "bg_card_hover":"#272c37",
-    "bg_card_sel":  "#1e3a5f",
-    "accent":       "#4a90d9",
-    "accent_dim":   "#2d5f99",
+    "bg_deep": "#0f1114",
+    "bg_surface": "#1a1d23",
+    "bg_card": "#21252e",
+    "bg_card_hover": "#272c37",
+    "bg_card_sel": "#1e3a5f",
+    "accent": "#4a90d9",
+    "accent_dim": "#2d5f99",
     "text_primary": "#e8eaf0",
-    "text_secondary":"#8b93a7",
-    "text_muted":   "#525a6b",
-    "border":       "#2e3340",
-    "border_accent":"#4a90d9",
-    "success":      "#4caf7d",
-    "warning":      "#e8a838",
-    "danger":       "#e05252",
+    "text_secondary": "#8b93a7",
+    "text_muted": "#525a6b",
+    "border": "#2e3340",
+    "border_accent": "#4a90d9",
+    "success": "#4caf7d",
+    "warning": "#e8a838",
+    "danger": "#e05252",
 }
 
 APP_STYLESHEET = f"""

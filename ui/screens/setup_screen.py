@@ -5,8 +5,14 @@ The user browses to their Steam installation directory.
 
 import os
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QLineEdit, QFileDialog, QSizePolicy,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QLineEdit,
+    QFileDialog,
+    QSizePolicy,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
@@ -20,6 +26,7 @@ class SetupScreen(QWidget):
     Emits `steam_dir_confirmed(path: str)` when the user provides
     a valid Steam directory.
     """
+
     steam_dir_confirmed = Signal(str)
 
     def __init__(self, parent=None):

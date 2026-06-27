@@ -13,7 +13,9 @@ from core.steam import SteamUserShortcuts
 
 def _round_pixmap(pixmap: QPixmap, size: int) -> QPixmap:
     """Crop a pixmap into a circular thumbnail."""
-    scaled = pixmap.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+    scaled = pixmap.scaled(
+        size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+    )
     output = QPixmap(size, size)
     output.fill(Qt.transparent)
     painter = QPainter(output)
@@ -79,7 +81,8 @@ class UserCard(QFrame):
     """
     Emits `selected(SteamUserShortcuts)` when clicked.
     """
-    selected = Signal(object)   # SteamUserShortcuts
+
+    selected = Signal(object)  # SteamUserShortcuts
 
     def __init__(self, user: SteamUserShortcuts, parent=None):
         super().__init__(parent)
@@ -104,9 +107,13 @@ class UserCard(QFrame):
             if not raw.isNull():
                 avatar_label.setPixmap(_round_pixmap(raw, AVATAR_SIZE))
             else:
-                avatar_label.setPixmap(_avatar_placeholder(AVATAR_SIZE, self._display_initials()))
+                avatar_label.setPixmap(
+                    _avatar_placeholder(AVATAR_SIZE, self._display_initials())
+                )
         else:
-            avatar_label.setPixmap(_avatar_placeholder(AVATAR_SIZE, self._display_initials()))
+            avatar_label.setPixmap(
+                _avatar_placeholder(AVATAR_SIZE, self._display_initials())
+            )
 
         layout.addWidget(avatar_label)
 

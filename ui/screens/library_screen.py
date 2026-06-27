@@ -4,8 +4,14 @@ Shown after the Steam directory is confirmed.
 """
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QScrollArea, QPushButton, QSizePolicy, QFrame,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QScrollArea,
+    QPushButton,
+    QSizePolicy,
+    QFrame,
 )
 from PySide6.QtCore import Qt, Signal
 
@@ -19,7 +25,8 @@ class LibraryScreen(QWidget):
     Emits `user_selected(SteamUserShortcuts)` when the user clicks a card
     and then confirms with the "Open" button.
     """
-    user_selected = Signal(object)   # SteamUserShortcuts
+
+    user_selected = Signal(object)  # SteamUserShortcuts
     change_steam_dir = Signal()
 
     def __init__(self, parent=None):
@@ -149,7 +156,6 @@ class LibraryScreen(QWidget):
     def _on_open(self):
         if self._selected_user:
             self.user_selected.emit(self._selected_user)
-
 
     def _deselect_all(self):
         """Clears selection and disables the open button."""
