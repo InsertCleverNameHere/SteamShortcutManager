@@ -171,7 +171,6 @@ class ShortcutListScreen(QWidget):
             )
 
             if success:
-                self.load_user_shortcuts(self._current_user_obj)
                 self.shortcut_clicked.emit(game_name, vdf_path, new_id)
             else:
                 QMessageBox.critical(self, "Error", msg)
