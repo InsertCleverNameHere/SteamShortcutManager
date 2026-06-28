@@ -227,15 +227,17 @@ class AssetDetailsScreen(QWidget):
 
         # --- Row 1: Toolbox (Back, Match, Status, Controls) ---
         toolbox_row = QHBoxLayout()
+        toolbox_row.setSpacing(5)
 
         self.back_btn = QPushButton("← Back")
         self.back_btn.setObjectName("secondary")
+        self.back_btn.setFixedSize(80, 35)
         self.back_btn.clicked.connect(self.back_requested)
         toolbox_row.addWidget(self.back_btn)
 
         # Smart Suggestion Badge
         self.suggestion_widget = QFrame()
-        self.suggestion_widget.setFixedHeight(36)
+        self.suggestion_widget.setFixedHeight(35)
         self.suggestion_widget.setFixedWidth(140)
         self.suggestion_widget.setStyleSheet(f"""
             QFrame {{
@@ -249,7 +251,7 @@ class AssetDetailsScreen(QWidget):
         self.suggestion_layout.setSpacing(8)
 
         self.suggestion_thumb = QLabel()
-        self.suggestion_thumb.setFixedSize(80, 30)
+        self.suggestion_thumb.setFixedSize(80, 28)
         self.suggestion_thumb.setScaledContents(True)
         self.suggestion_thumb.setStyleSheet(
             "background: #000; border-right: 1px solid #2e3340;"
@@ -272,9 +274,10 @@ class AssetDetailsScreen(QWidget):
 
         self.status_label = QLabel("")
         self.status_label.setStyleSheet(
-            f"color: {PALETTE['text_primary']}; font-size: 11px; font-weight: bold; margin-right: 10px;"
+            f"color: {PALETTE['text_primary']}; font-size: 11px; font-weight: bold; margin-left: 10px;"
         )
-        self.status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.status_label.setFixedWidth(200)
         toolbox_row.addWidget(self.status_label)
 
         self.force_cb = QCheckBox("Force Overwrite")

@@ -83,7 +83,7 @@ def download_assets(
         if login_timed_out:
             return False, "❌ Operation aborted."  # Checkpoint 1
 
-        report(f"📑 [2/4] Fetching manifest for {steam_appid}...")
+        report(f"📑 [2/4] Fetching manifest...")
         # AppIDs must be integers for the steam library lookup
         product_info = client.get_product_info(apps=[int(steam_appid)])
 
@@ -148,7 +148,7 @@ def download_assets(
         # Handle JSON positioning
         json_path = os.path.join(grid_dir, f"{local_appid}.json")
         if force or not os.path.exists(json_path):
-            report(f"📝 [4/4] Generating positioning JSON...")
+            report(f"📝 [4/4] Generating JSON...")
             logo_pos = assets_meta.get("logo_position")
             if logo_pos:
                 json_data = {

@@ -74,6 +74,7 @@ class ShortcutListScreen(QWidget):
         header = QHBoxLayout()
         back_btn = QPushButton("← Back")
         back_btn.setObjectName("secondary")
+        back_btn.setFixedSize(80, 35)
         back_btn.clicked.connect(self.back_requested)
         header.addWidget(back_btn)
 
@@ -81,14 +82,15 @@ class ShortcutListScreen(QWidget):
 
         self.title_label = QLabel("Shortcuts")
         self.title_label.setObjectName("heading")
+        self.title_label.setMaximumWidth(300)
         header.addWidget(self.title_label)
 
-        header.addSpacing(40)
+        header.addSpacing(20)
 
         # --- Search Bar ---
         self.search_bar = QLineEdit()
         self.search_bar.setPlaceholderText("🔍 Search by name...")
-        self.search_bar.setFixedWidth(250)
+        self.search_bar.setFixedWidth(200)
         self.search_bar.textChanged.connect(lambda: self._search_timer.start())
         header.addWidget(self.search_bar)
 
@@ -110,6 +112,7 @@ class ShortcutListScreen(QWidget):
 
         # Add Shortcut Button
         self.add_btn = QPushButton("+ Add Shortcut")
+        self.add_btn.setFixedWidth(130)
         self.add_btn.setFixedHeight(35)
         self.add_btn.clicked.connect(self._on_add_clicked)
         header.addWidget(self.add_btn)
@@ -316,6 +319,7 @@ class ShortcutListScreen(QWidget):
                     f"font-size: 11px; color: {PALETTE['text_muted']}; border: none; background: transparent;"
                 )
                 sub_lbl.setWordWrap(False)  # Keep it on one line for a cleaner look
+                sub_lbl.setMaximumWidth(650)
                 sub_lbl.setSizePolicy(
                     QSizePolicy.Ignored, QSizePolicy.Preferred
                 )  # Allow horizontal shrinking
