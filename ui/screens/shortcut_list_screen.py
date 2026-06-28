@@ -207,7 +207,34 @@ class ShortcutListScreen(QWidget):
             shortcuts = get_shortcut_list(data)
 
             if not shortcuts:
-                self.list_layout.addWidget(QLabel("No shortcuts found in this file."))
+                empty_container = QWidget()
+                empty_layout = QVBoxLayout(empty_container)
+                empty_layout.setAlignment(Qt.AlignCenter)
+                empty_layout.setContentsMargins(0, 80, 0, 0)
+                empty_layout.setSpacing(10)
+
+                icon_lbl = QLabel("📂")
+                icon_lbl.setStyleSheet("font-size: 48px; background: transparent;")
+                icon_lbl.setAlignment(Qt.AlignCenter)
+
+                msg_lbl = QLabel("No shortcuts found")
+                msg_lbl.setObjectName("heading")
+                msg_lbl.setAlignment(Qt.AlignCenter)
+
+                sub_lbl = QLabel(
+                    "This Steam profile doesn't have any non-Steam games yet.\n"
+                    "Click '+ Add Shortcut' to get started."
+                )
+                sub_lbl.setObjectName("subheading")
+                sub_lbl.setAlignment(Qt.AlignCenter)
+                sub_lbl.setStyleSheet(
+                    f"color: {PALETTE['text_muted']}; background: transparent;"
+                )
+
+                empty_layout.addWidget(icon_lbl)
+                empty_layout.addWidget(msg_lbl)
+                empty_layout.addWidget(sub_lbl)
+                self.list_layout.addWidget(empty_container)
 
             for s in shortcuts:
                 # 1. Extract Data
