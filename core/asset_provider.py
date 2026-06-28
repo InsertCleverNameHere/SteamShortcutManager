@@ -49,13 +49,14 @@ def download_assets(
         if status_callback:
             status_callback(msg)
 
-    client = SteamClient()
+    client = None
     login_timed_out = False
 
     def watchdog():
         nonlocal login_timed_out
         login_timed_out = True
-        client.disconnect()
+        if client:
+            client.disconnect()
 
     try:
         report("🌐 [1/4] Connecting to Steam...")
@@ -64,14 +65,20 @@ def download_assets(
         timer = threading.Timer(15.0, watchdog)
         timer.start()
         try:
+            client = SteamClient()
             login_result = client.anonymous_login()
+        except Exception as e:
+            # Catch bootstrap-specific errors
+            timer.cancel()
+            return False, f"❌ Steam API Error: {str(e)}"
         finally:
-            timer.cancel()  # Ensure timer stops regardless of success/fail
+            timer.start()  # # Reset/Ensure timer is still valid or cancel if done
+            timer.cancel()
 
         if login_timed_out:
             return False, "❌ Connection timed out (Steam servers may be slow)."
 
-        if login_result != 1:
+        if not client or login_result != 1:
             return False, "❌ Connection failed."
 
         if login_timed_out:
@@ -161,6 +168,7 @@ def download_assets(
 
     except Exception as e:
         print(f"DEBUG: Global Download Error: {e}")
-        return False, str(e)
+        return False, f"❌ Download error: {str(e)}"
     finally:
-        client.disconnect()
+        if client:
+            client.disconnect()
