@@ -50,6 +50,7 @@ class AddShortcutWorker(QObject):
 class ShortcutListScreen(QWidget):
     back_requested = Signal()
     shortcut_clicked = Signal(str, str, str)  # (game_name, shortcuts_path, appid)
+    user_updated = Signal()
 
     @property
     def current_user(self):
@@ -93,10 +94,25 @@ class ShortcutListScreen(QWidget):
 
         header.addStretch()
 
+        # Compact Square Refresh Button
+        self.refresh_btn = QPushButton("↻")
+        self.refresh_btn.setFixedSize(35, 35)  # Strict square dimensions
+        self.refresh_btn.setObjectName("secondary")
+        self.refresh_btn.setToolTip("Reload library from shortcuts.vdf")
+        # Ensure the icon is centered and not padded
+        self.refresh_btn.setStyleSheet(
+            "font-size: 18px; padding: 0px; font-weight: bold;"
+        )
+        self.refresh_btn.clicked.connect(
+            lambda: self.load_user_shortcuts(self._current_user_obj)
+        )
+        header.addWidget(self.refresh_btn)
+
         # Add Shortcut Button
-        add_btn = QPushButton("+ Add Shortcut")
-        add_btn.clicked.connect(self._on_add_clicked)
-        header.addWidget(add_btn)
+        self.add_btn = QPushButton("+ Add Shortcut")
+        self.add_btn.setFixedHeight(35)
+        self.add_btn.clicked.connect(self._on_add_clicked)
+        header.addWidget(self.add_btn)
 
         layout.addLayout(header)
         layout.addSpacing(20)
@@ -143,6 +159,10 @@ class ShortcutListScreen(QWidget):
         if not raw_path:
             return
 
+        # Ensure refresh button is disabled during resolution
+        self.add_btn.setEnabled(False)
+        self.refresh_btn.setEnabled(False)
+
         # Start background resolution
         self._add_thread = QThread()
         self._add_worker = AddShortcutWorker(raw_path)
@@ -158,6 +178,9 @@ class ShortcutListScreen(QWidget):
 
     def _on_shortcut_resolved(self, raw_path, exe_path, derived_name):
         """Continues the Add Shortcut flow after background resolution."""
+        # Re-enable buttons
+        self.add_btn.setEnabled(True)
+        self.refresh_btn.setEnabled(True)
         game_name, ok = QInputDialog.getText(
             self, "Add Shortcut", "Enter game name:", text=derived_name
         )
@@ -205,6 +228,9 @@ class ShortcutListScreen(QWidget):
         try:
             data = load_shortcuts(user_obj.shortcuts_path)
             shortcuts = get_shortcut_list(data)
+            # Sync the count back to the user object
+            self._current_user_obj.shortcut_count = len(shortcuts)
+            self.user_updated.emit()  # Notify the rest of the app
 
             if not shortcuts:
                 empty_container = QWidget()

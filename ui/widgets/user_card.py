@@ -89,6 +89,10 @@ class UserCard(QFrame):
         """Expose the user data associated with this card."""
         return self._user
 
+    def update_labels(self):
+        """Refreshes the shortcut count display."""
+        self.count_num.setText(str(self._user.shortcut_count))
+
     def __init__(self, user: SteamUserShortcuts, parent=None):
         super().__init__(parent)
         self._user = user
@@ -149,12 +153,12 @@ class UserCard(QFrame):
         count_col.setSpacing(2)
         count_col.setAlignment(Qt.AlignCenter)
 
-        count_num = QLabel(str(self._user.shortcut_count))
-        count_num.setAlignment(Qt.AlignCenter)
-        count_num.setStyleSheet(
+        self.count_num = QLabel(str(self._user.shortcut_count))
+        self.count_num.setAlignment(Qt.AlignCenter)
+        self.count_num.setStyleSheet(
             f"font-size: 22px; font-weight: 700; color: {PALETTE['accent']}; background: transparent;"
         )
-        count_col.addWidget(count_num)
+        count_col.addWidget(self.count_num)
 
         count_lbl = QLabel("shortcuts")
         count_lbl.setAlignment(Qt.AlignCenter)

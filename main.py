@@ -40,6 +40,7 @@ class MainWindow(QMainWindow):
             lambda: self.stack.setCurrentWidget(self.library_screen)
         )
         self.shortcut_screen.shortcut_clicked.connect(self.on_shortcut_selected)
+        self.shortcut_screen.user_updated.connect(self.library_screen.refresh_card_data)
 
         # Asset Details Connections
         self.asset_screen.back_requested.connect(self.on_back_from_details)

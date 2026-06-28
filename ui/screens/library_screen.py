@@ -29,6 +29,11 @@ class LibraryScreen(QWidget):
     user_selected = Signal(object)  # SteamUserShortcuts
     change_steam_dir = Signal()
 
+    def refresh_card_data(self):
+        """Forces all visible cards to update their labels from their user objects."""
+        for card in self._cards:
+            card.update_labels()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._cards: list[UserCard] = []
