@@ -321,7 +321,8 @@ class AssetDetailsScreen(QWidget):
         self.title_label = QLabel("Asset Details")
         self.title_label.setObjectName("heading")
         self.title_label.setWordWrap(True)
-        self.title_label.setMaximumWidth(750)  # Cap width to prevent window stretching
+        self.title_label.setFixedWidth(600)  # Fix width to prevent window stretching
+        self.title_label.setMinimumHeight(70)  # Fix height too
         self.title_label.setAlignment(Qt.AlignCenter)  # Center text within the label
         title_row.addWidget(self.title_label)
 
