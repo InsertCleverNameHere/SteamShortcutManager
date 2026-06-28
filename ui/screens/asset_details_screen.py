@@ -188,6 +188,9 @@ class AssetDetailsScreen(QWidget):
 
         # Visual dimming for the back button
         if is_busy:
+            # Re-create the effect to make sure it stays alive for the next cycle
+            self._back_dim_effect = QGraphicsOpacityEffect(self)
+            self._back_dim_effect.setOpacity(0.4)
             self.back_btn.setGraphicsEffect(self._back_dim_effect)
         else:
             self.back_btn.setGraphicsEffect(None)
