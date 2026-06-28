@@ -46,8 +46,7 @@ class SetupScreen(QWidget):
         col.setSpacing(0)
         col.setAlignment(Qt.AlignCenter)
 
-        # Steam icon placeholder  ·  could be swapped for a real SVG later
-        icon_label = QLabel("⚙")
+        icon_label = QLabel("🛠️")
         icon_label.setAlignment(Qt.AlignCenter)
         icon_label.setStyleSheet(
             f"font-size: 48px; color: {PALETTE['accent']}; margin-bottom: 24px;"
