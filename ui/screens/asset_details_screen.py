@@ -447,6 +447,19 @@ class AssetDetailsScreen(QWidget):
             self, "Inject Assets", "Enter Steam AppID:", text=default_id
         )
 
+        # Guard against cancellation or empty input
+        if not (ok and steam_id):
+            return
+
+        # Re-apply Sanitization and define 'force'
+        steam_id = steam_id.strip()
+        if not steam_id.isdigit():
+            self.status_opacity_effect.setOpacity(1.0)
+            self.status_label.setText("⚠️ AppID must be numeric")
+            return
+
+        force = self.force_cb.isChecked()
+
         # UI Feedback
         self._set_busy(True)
         self.status_opacity_effect.setOpacity(1.0)

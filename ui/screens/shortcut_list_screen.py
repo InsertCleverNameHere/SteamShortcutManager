@@ -201,6 +201,13 @@ class ShortcutListScreen(QWidget):
             )
 
             if success:
+                # Manually update the data object's count
+                if self._current_user_obj:
+                    self._current_user_obj.shortcut_count += 1
+                    # Signal the LibraryScreen (UserCard) to refresh its label
+                    self.user_updated.emit()
+
+                # Redirect to details
                 self.shortcut_clicked.emit(game_name, vdf_path, new_id)
             else:
                 QMessageBox.critical(self, "Error", msg)

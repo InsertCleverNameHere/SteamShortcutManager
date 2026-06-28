@@ -24,3 +24,8 @@ parameters.json
 Thumbs.db
 desktop.ini
 $RECYCLE.BIN/
+
+# -- Build system ---
+dist/
+build/
+*.spec.bak
