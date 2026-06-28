@@ -72,7 +72,6 @@ def download_assets(
             timer.cancel()
             return False, f"❌ Steam API Error: {str(e)}"
         finally:
-            timer.start()  # # Reset/Ensure timer is still valid or cancel if done
             timer.cancel()
 
         if login_timed_out:
