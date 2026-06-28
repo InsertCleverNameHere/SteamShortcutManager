@@ -304,3 +304,6 @@ class ShortcutListScreen(QWidget):
             error_lbl = QLabel(f"Error loading shortcuts: {e}")
             error_lbl.setStyleSheet(f"color: {PALETTE['danger']};")
             self.list_layout.addWidget(error_lbl)
+
+        # Autofocus search bar in this screen
+        self.search_bar.setFocus()
