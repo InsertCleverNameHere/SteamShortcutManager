@@ -188,9 +188,7 @@ class AssetDetailsScreen(QWidget):
 
         # Visual dimming for the back button
         if is_busy:
-            eff = QGraphicsOpacityEffect(self.back_btn)
-            eff.setOpacity(0.4)
-            self.back_btn.setGraphicsEffect(eff)
+            self.back_btn.setGraphicsEffect(self._back_dim_effect)
         else:
             self.back_btn.setGraphicsEffect(None)
 
@@ -219,6 +217,8 @@ class AssetDetailsScreen(QWidget):
         self._search_generation = 0
         self._search_state = SearchState.IDLE
         self._all_assets_present = False
+        self._back_dim_effect = QGraphicsOpacityEffect(self)
+        self._back_dim_effect.setOpacity(0.4)
         self._build_ui()
 
     def _build_ui(self):
@@ -440,26 +440,12 @@ class AssetDetailsScreen(QWidget):
         # Keep the actual functional state
         self.inject_btn.setEnabled(can_inject)
 
-    def _on_inject_clicked(self, auto_id=None):
+    def _on_inject_clicked(self):
         # 1. Determine Steam ID and Force state
-        if auto_id:
-            steam_id = auto_id
-            force = False  # Never force on auto-fills
-        else:
-            default_id = self._suggested_steam_id if self._suggested_steam_id else ""
-            steam_id, ok = QInputDialog.getText(
-                self, "Inject Assets", "Enter Steam AppID:", text=default_id
-            )
-            if not (ok and steam_id):
-                return
-
-            steam_id = steam_id.strip()
-            if not steam_id.isdigit():
-                self.status_opacity_effect.setOpacity(1.0)
-                self.status_label.setText("⚠️ AppID must be numeric")
-                return
-
-            force = self.force_cb.isChecked()
+        default_id = self._suggested_steam_id if self._suggested_steam_id else ""
+        steam_id, ok = QInputDialog.getText(
+            self, "Inject Assets", "Enter Steam AppID:", text=default_id
+        )
 
         # UI Feedback
         self._set_busy(True)
