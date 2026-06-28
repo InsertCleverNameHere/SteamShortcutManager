@@ -71,8 +71,6 @@ def download_assets(
             # Catch bootstrap-specific errors
             timer.cancel()
             return False, f"❌ Steam API Error: {str(e)}"
-        finally:
-            timer.cancel()
 
         if login_timed_out:
             return False, "❌ Connection timed out (Steam servers may be slow)."
@@ -84,8 +82,15 @@ def download_assets(
             return False, "❌ Operation aborted."  # Checkpoint 1
 
         report(f"📑 [2/4] Fetching manifest...")
-        # AppIDs must be integers for the steam library lookup
-        product_info = client.get_product_info(apps=[int(steam_appid)])
+        try:
+            # AppIDs must be integers for the steam library lookup
+            product_info = client.get_product_info(apps=[int(steam_appid)])
+        except BaseException as e:
+            timer.cancel()
+            return False, f"❌ Connection lost during manifest fetch: {str(e)}"
+        finally:
+            # We are done with the Steam Client phase, cancel the watchdog now
+            timer.cancel()
 
         if login_timed_out:
             return False, "❌ Operation aborted."  # Checkpoint 2
