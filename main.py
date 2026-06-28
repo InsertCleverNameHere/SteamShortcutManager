@@ -71,10 +71,8 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.asset_screen)
 
     def on_back_from_details(self):
-        """Resets the window to default size when leaving the details screen."""
+        """Returns to the shortcut list while preserving the current window size."""
         self.stack.setCurrentWidget(self.shortcut_screen)
-        # Snap the window back to the original size
-        self.resize(800, 700)
 
 
 if __name__ == "__main__":
