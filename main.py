@@ -1,4 +1,5 @@
 import sys
+import os
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 from ui.theme import APP_STYLESHEET
 from ui.screens.setup_screen import SetupScreen
@@ -8,11 +9,26 @@ from ui.screens.asset_details_screen import AssetDetailsScreen
 from core.steam import detect_default_steam_dir, find_shortcuts
 
 
+def get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Steam Shortcut Manager")
         self.resize(800, 700)
+        icon_path = get_resource_path(os.path.join("assets", "icon.ico"))
+        if os.path.exists(icon_path):
+            from PySide6.QtGui import QIcon
+
+            self.setWindowIcon(QIcon(icon_path))
         self.setStyleSheet(APP_STYLESHEET)
 
         self.stack = QStackedWidget()
