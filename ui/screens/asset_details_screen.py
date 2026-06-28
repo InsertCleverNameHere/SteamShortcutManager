@@ -236,7 +236,7 @@ class AssetDetailsScreen(QWidget):
         # Smart Suggestion Badge
         self.suggestion_widget = QFrame()
         self.suggestion_widget.setFixedHeight(36)
-        self.suggestion_widget.setFixedWidth(220)
+        self.suggestion_widget.setFixedWidth(140)
         self.suggestion_widget.setStyleSheet(f"""
             QFrame {{
                 background: {PALETTE['bg_card']}; 
@@ -507,7 +507,7 @@ class AssetDetailsScreen(QWidget):
         if isinstance(result, dict):
             self._search_state = SearchState.FOUND
             self._suggested_steam_id = result["id"]
-            self.suggestion_text.setText(f"MATCH: {result['id']}")
+            self.suggestion_text.setText(result["id"])
 
             if result.get("thumb_bytes"):
                 pix = QPixmap()
