@@ -3,10 +3,19 @@ import json
 import requests
 import threading
 import time
+import socket
 from steam.client import SteamClient
 
 # The base URL for Steam's official assets
 CDN_BASE = "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps"
+
+# Timeouts
+_ASSET_REQUEST_TIMEOUT = (
+    8  # seconds per CDN image download (was 15 — 2 retries × 15s = 30s lag)
+)
+_STEAM_CLIENT_TIMEOUT = (
+    30  # seconds for the entire SteamClient phase (login + product info)
+)
 
 
 def search_steam_apps(query: str):
@@ -34,69 +43,128 @@ def search_steam_apps(query: str):
         return "ERR_NETWORK"  # Specific error indicator
 
 
+def is_internet_reachable(timeout=2):
+    """Lightning-fast check to see if we can reach a public DNS server."""
+    try:
+        # Connect to Cloudflare's public DNS port 53
+        socket.create_connection(("1.1.1.1", 53), timeout=timeout)
+        return True
+    except OSError:
+        pass
+    return False
+
+
 def download_assets(
     steam_appid: str,
     local_appid: str,
     grid_dir: str,
     force: bool = False,
     status_callback=None,
+    abort_event: threading.Event | None = None,
+    client_holder: list | None = None,
 ):
     """
-    Fetches metadata and downloads assets. Reports progress via status_callback.
+    Fetches metadata and downloads Steam Grid assets.
+
+    Args:
+        steam_appid:     Real Steam AppID to look up.
+        local_appid:     Local/non-Steam AppID used for file naming.
+        grid_dir:        Path to the user's Steam grid folder.
+        force:           If True, overwrite existing assets.
+        status_callback: Optional callable(str) for live progress messages.
+        abort_event:     threading.Event; set externally to cancel the operation.
+                         When set, download_assets returns (False, "❌ Cancelled.").
+        client_holder:   Single-element list populated with the live SteamClient so
+                         the caller can call disconnect() to unblock a hanging network
+                         call (e.g. from an abort button or a watchdog).
     """
 
-    def report(msg):
+    def report(msg: str) -> None:
         if status_callback:
             status_callback(msg)
 
-    client = None
-    login_timed_out = False
+    def is_aborted() -> bool:
+        return bool(abort_event and abort_event.is_set())
 
-    def watchdog():
-        nonlocal login_timed_out
-        login_timed_out = True
-        if client:
-            client.disconnect()
+    client = None
+    timed_out = False
+
+    def watchdog() -> None:
+        """
+        Called by the timer thread when _STEAM_CLIENT_TIMEOUT elapses.
+        Disconnects the SteamClient so any blocking call raises immediately.
+        """
+        nonlocal timed_out
+        timed_out = True
+        if client is not None:
+            try:
+                client.disconnect()
+            except Exception:
+                pass
+
+    # One timer covers the entire SteamClient phase (login + product info).
+    # It is only cancelled after client.disconnect() below, once we no longer need it.
+    timer = threading.Timer(_STEAM_CLIENT_TIMEOUT, watchdog)
+    timer.start()
 
     try:
+        if is_aborted():
+            return False, "❌ Cancelled."
+
+        if not is_internet_reachable():
+            return False, "❌ No internet connection detected."
+
         report("🌐 [1/4] Connecting to Steam...")
 
-        # Start 15-second watchdog timer
-        timer = threading.Timer(15.0, watchdog)
-        timer.start()
         try:
             client = SteamClient()
+            if client_holder is not None:
+                client_holder[0] = client  # Expose client for external abort
             login_result = client.anonymous_login()
         except Exception as e:
-            # Catch bootstrap-specific errors
-            timer.cancel()
+            if timed_out:
+                return False, "❌ Connection timed out (Steam servers may be slow)."
+            if is_aborted():
+                return False, "❌ Cancelled"
             return False, f"❌ Steam API Error: {str(e)}"
 
-        if login_timed_out:
-            return False, "❌ Connection timed out (Steam servers may be slow)."
-
+        if timed_out:
+            return False, "❌ Operation aborted."
+        if is_aborted():
+            return False, "❌ Cancelled"
         if not client or login_result != 1:
             return False, "❌ Connection failed."
-
-        if login_timed_out:
-            return False, "❌ Operation aborted."  # Checkpoint 1
 
         report(f"📑 [2/4] Fetching manifest...")
         try:
             # AppIDs must be integers for the steam library lookup
             product_info = client.get_product_info(apps=[int(steam_appid)])
         except BaseException as e:
-            timer.cancel()
+            if timed_out:
+                return (
+                    False,
+                    "❌ Timed out fetching app metadata. Check your connection.",
+                )
+            if is_aborted():
+                return False, "❌ Cancelled."
             return False, f"❌ Connection lost during manifest fetch: {str(e)}"
-        finally:
-            # We are done with the Steam Client phase, cancel the watchdog now
-            timer.cancel()
 
-        if login_timed_out:
-            return False, "❌ Operation aborted."  # Checkpoint 2
+        if timed_out:
+            return False, "❌ Timed out fetching app metadata. Check your connection."
+        if is_aborted():
+            return False, "❌ Cancelled."
+
+        # SteamClient work is done — cancel the watchdog and cleanly disconnect.
+        timer.cancel()
+        try:
+            client.disconnect()
+        except Exception:
+            pass
+        client = None
+        if client_holder is not None:
+            client_holder[0] = None
 
         app_data = product_info.get("apps", {}).get(int(steam_appid))
-
         if not app_data:
             return False, "❌ AppID not found on Steam."
 
@@ -113,6 +181,9 @@ def download_assets(
 
         downloaded_count = 0
         for suffix, (key, default_name) in mapping.items():
+            if is_aborted():
+                return False, "❌ Cancelled"
+
             asset_entry = assets_full.get(key, {})
             img_hash_path = asset_entry.get("image", {}).get("english")
 
@@ -130,25 +201,36 @@ def download_assets(
             if not force and os.path.exists(local_path):
                 continue
 
+            display_name = key.replace("library_", "") or "header"
             report(f"📥 [3/4] Downloading {key.replace('library_', '')}...")
             download_success = False
             for attempt in range(2):
+                if is_aborted():
+                    return False, "❌ Cancelled"
                 try:
-                    res = requests.get(url, timeout=15)
+                    res = requests.get(url, timeout=_ASSET_REQUEST_TIMEOUT)
                     if res.status_code == 200:
                         with open(local_path, "wb") as f:
                             f.write(res.content)
                         downloaded_count += 1
                         download_success = True
                         break  # Exit retry loop on success
+                except requests.exceptions.Timeout:
+                    suffix_msg = "retrying..." if attempt == 0 else "skipping"
+                    report(f"⚠️ {display_name} timed out — {suffix_msg}")
                 except requests.exceptions.RequestException:
                     pass  # Let it retry or fail gracefully
 
-                if attempt == 0:  # If first attempt failed, wait briefly
+                if (
+                    attempt == 0 and not is_aborted
+                ):  # If first attempt failed, wait briefly
                     time.sleep(1)
 
             if not download_success:
-                report(f"⚠️ Skipping {key.replace('library_', '')}: Download failed")
+                report(f"⚠️ Skipping {display_name}: download failed after 2 attempts")
+
+        if is_aborted():
+            return False, "❌ Cancelled."
 
         # Handle JSON positioning
         json_path = os.path.join(grid_dir, f"{local_appid}.json")
@@ -171,8 +253,18 @@ def download_assets(
         return True, f"✅ Successfully injected {downloaded_count} assets."
 
     except Exception as e:
+        if is_aborted():
+            return False, "❌ Cancelled."
+        if timed_out:
+            return False, "❌ Operation timed out. Check your connection and try again."
         print(f"DEBUG: Global Download Error: {e}")
         return False, f"❌ Download error: {str(e)}"
     finally:
-        if client:
-            client.disconnect()
+        timer.cancel()
+        if client is not None:
+            try:
+                client.disconnect()
+            except Exception:
+                pass
+        if client_holder is not None:
+            client_holder[0] = None

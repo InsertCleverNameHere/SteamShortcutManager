@@ -1,5 +1,6 @@
 import os
 import shutil
+import threading
 import requests
 from PySide6.QtWidgets import (
     QWidget,
@@ -25,6 +26,7 @@ from PySide6.QtCore import (
     Signal,
     QPropertyAnimation,
     QEasingCurve,
+    QTimer,
 )
 from core.vdf_parser import update_shortcut_name, delete_shortcut
 from ui.theme import PALETTE
@@ -88,15 +90,31 @@ class SearchWorker(QObject):
 class DownloadWorker(QObject):
     """Handles the heavy network lifting in a separate thread."""
 
-    finished = Signal(bool, str, str)
+    finished = Signal(bool, str, str, int)
     status_update = Signal(str)
 
-    def __init__(self, steam_id, local_id, grid_dir, force):
+    def __init__(self, steam_id, local_id, grid_dir, force, generation):
         super().__init__()
         self.steam_id = steam_id
         self.local_id = local_id
         self.grid_dir = grid_dir
         self.force = force
+        self.generation = generation
+        self._abort_event = threading.Event()
+        self._client_holder = [None]
+
+    def abort(self) -> None:
+        """
+        Signal the worker to stop and forcibly disconnect any active SteamClient.
+        Safe to call from the main thread at any time.
+        """
+        self._abort_event.set()
+        client = self._client_holder[0]
+        if client is not None:
+            try:
+                client.disconnect()
+            except Exception:
+                pass
 
     def run(self):
         # We pass the signal's emit function as the callback
@@ -106,8 +124,10 @@ class DownloadWorker(QObject):
             self.grid_dir,
             self.force,
             status_callback=self.status_update.emit,
+            abort_event=self._abort_event,
+            client_holder=self._client_holder,
         )
-        self.finished.emit(success, message, self.local_id)
+        self.finished.emit(success, message, self.local_id, self.generation)
 
 
 class AssetSlot(QWidget):
@@ -177,23 +197,52 @@ class AssetDetailsScreen(QWidget):
     _active_threads = set()
 
     def _set_busy(self, is_busy: bool):
-        """Atomically enables or disables controls with visual feedback."""
-        # is_busy=True means UI is locked
-        enabled = not is_busy
-        self.back_btn.setEnabled(enabled)
-        self.inject_btn.setEnabled(enabled)
-        self.delete_btn.setEnabled(enabled)
-        self.edit_btn.setEnabled(enabled)
-        self.force_cb.setEnabled(enabled)
+        """Toggles the 'download in progress' UI state.
 
-        # Visual dimming for the back button
+        When busy:
+          - The Inject buttonls text changes into Cancel.
+          - Edit, Delete, and Force checkbox are disabled.
+        """
+        self._is_busy = is_busy
+
+        # These controls don't make sense mid-download
+        self.delete_btn.setEnabled(not is_busy)
+        self.edit_btn.setEnabled(not is_busy)
+        self.force_cb.setEnabled(not is_busy)
+
+        # Disable and dim the Back button
+        self.back_btn.setEnabled(not is_busy)
+
         if is_busy:
             # Re-create the effect to make sure it stays alive for the next cycle
             self._back_dim_effect = QGraphicsOpacityEffect(self)
             self._back_dim_effect.setOpacity(0.4)
             self.back_btn.setGraphicsEffect(self._back_dim_effect)
+
+            # Swap Inject ↔ Cancel
+            self.inject_btn.setText("✕ Cancel")
+            self.inject_btn.setEnabled(True)  # Make sure it's clickable
+            self.btn_opacity_effect.setOpacity(1.0)  # Make sure it's fully visible
+            self.inject_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {PALETTE['danger']};
+                    color: {PALETTE['text_primary']};
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 20px;
+                    font-size: 13px;
+                    font-weight: 600;
+                }}
+                QPushButton:hover {{ background-color: #e86060; }}
+                QPushButton:pressed {{ background-color: #c04040; }}
+            """)
         else:
             self.back_btn.setGraphicsEffect(None)
+
+            # Swap back Cancel ↔ Inject
+            self.inject_btn.setText("↓ Inject from Steam")
+            self.inject_btn.setStyleSheet("")
+            self._update_button_state()  # Let the app decide if it should be dim/disabled
 
     def _on_thread_finished(self):
         """Safely clears the thread reference after it is deleted."""
@@ -201,11 +250,15 @@ class AssetDetailsScreen(QWidget):
 
     def _on_search_thread_finished(self, thread_instance):
         """Removes a thread from the registry once it has safely finished."""
-        if thread_instance in AssetDetailsScreen._active_threads:
-            AssetDetailsScreen._active_threads.remove(thread_instance)
-
-        if self._search_thread == thread_instance:
+        AssetDetailsScreen._active_threads.discard(thread_instance)
+        if self._search_thread is thread_instance:
             self._search_thread = None
+
+    def _on_download_thread_finished(self, thread_instance):
+        """Safely removes the download thread from the registry once it finishes."""
+        AssetDetailsScreen._active_threads.discard(thread_instance)
+        if getattr(self, "_thread", None) is thread_instance:
+            self._thread = None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -220,8 +273,8 @@ class AssetDetailsScreen(QWidget):
         self._search_generation = 0
         self._search_state = SearchState.IDLE
         self._all_assets_present = False
-        self._back_dim_effect = QGraphicsOpacityEffect(self)
-        self._back_dim_effect.setOpacity(0.4)
+        self._is_busy = False  # True while a DownloadWorker is running
+        self._download_generation = 0  # Download counter
         self._build_ui()
 
     def _build_ui(self):
@@ -235,7 +288,8 @@ class AssetDetailsScreen(QWidget):
         self.back_btn = QPushButton("← Back")
         self.back_btn.setObjectName("secondary")
         self.back_btn.setFixedSize(80, 35)
-        self.back_btn.clicked.connect(self.back_requested)
+        # Route through _on_back_clicked — it aborts any active download first.
+        self.back_btn.clicked.connect(self._on_back_clicked)
         toolbox_row.addWidget(self.back_btn)
 
         # Smart Suggestion Badge
@@ -290,7 +344,9 @@ class AssetDetailsScreen(QWidget):
         self.force_cb.stateChanged.connect(self._update_button_state)
         toolbox_row.addWidget(self.force_cb)
 
+        # Inject button — shown in normal state, hidden while downloading
         self.inject_btn = QPushButton("↓ Inject from Steam")
+        self.inject_btn.setFixedWidth(160)
         self.inject_btn.clicked.connect(self._on_inject_clicked)
         toolbox_row.addWidget(self.inject_btn)
 
@@ -401,9 +457,39 @@ class AssetDetailsScreen(QWidget):
         # Initial states
         self.status_opacity_effect.setOpacity(0.0)
         self.btn_opacity_effect.setOpacity(1.0)
+        # Persistent, cancellable timer for status fades
+        self._status_fade_timer = QTimer(self)
+        self._status_fade_timer.setSingleShot(True)
+        self._status_fade_timer.timeout.connect(self._fade_out_status)
+
+    def _on_back_clicked(self) -> None:
+        """Navigate back."""
+        self.back_requested.emit()
+
+    def _cancel_active_download(self) -> None:
+        """Abort worker and restore UI state immediately."""
+        if self._worker is not None:
+            self._worker.abort()
+        self._set_busy(False)
+        self.status_label.setText("Cancelled.")
+        self.status_opacity_effect.setOpacity(1.0)
+        self._status_fade_timer.start(2000)
+
+    def _fade_out_status(self) -> None:
+        self.status_anim = QPropertyAnimation(
+            self.status_opacity_effect, b"opacity", self
+        )
+        self.status_anim.setDuration(400)
+        self.status_anim.setEndValue(0.0)
+        self.status_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self.status_anim.start()
 
     def _update_button_state(self):
         """Animates button and label states based on asset and search state."""
+        # Don't mess with button opacity if it's currently a Cancel button ---
+        if getattr(self, "_is_busy", False):
+            return
+
         can_inject = not self._all_assets_present or self.force_cb.isChecked()
         target_btn_opacity = 1.0 if can_inject else 0.3
 
@@ -444,6 +530,10 @@ class AssetDetailsScreen(QWidget):
         self.inject_btn.setEnabled(can_inject)
 
     def _on_inject_clicked(self):
+        # Route the button click to inject or cancel based on busy state
+        if self._is_busy:
+            self._cancel_active_download()
+            return
         # 1. Determine Steam ID and Force state
         default_id = self._suggested_steam_id if self._suggested_steam_id else ""
         steam_id, ok = QInputDialog.getText(
@@ -463,6 +553,15 @@ class AssetDetailsScreen(QWidget):
 
         force = self.force_cb.isChecked()
 
+        # Defuse the timer and stop ghost animations
+        if hasattr(self, "_status_fade_timer") and self._status_fade_timer.isActive():
+            self._status_fade_timer.stop()
+        if (
+            hasattr(self, "status_anim")
+            and self.status_anim.state() == QPropertyAnimation.Running
+        ):
+            self.status_anim.stop()
+
         # UI Feedback
         self._set_busy(True)
         self.status_opacity_effect.setOpacity(1.0)
@@ -471,7 +570,11 @@ class AssetDetailsScreen(QWidget):
         # Setup Thread and Worker
         self._thread = QThread()
         grid_dir = os.path.join(os.path.dirname(self._current_shortcuts_path), "grid")
-        self._worker = DownloadWorker(steam_id, self._current_appid, grid_dir, force)
+        self._download_generation += 1
+        current_gen = self._download_generation
+        self._worker = DownloadWorker(
+            steam_id, self._current_appid, grid_dir, force, current_gen
+        )
         self._worker.moveToThread(self._thread)
 
         # Connect Signals
@@ -482,14 +585,29 @@ class AssetDetailsScreen(QWidget):
         self._worker.finished.connect(self._on_download_finished)
         self._worker.finished.connect(self._thread.quit)
         self._worker.finished.connect(self._worker.deleteLater)
-        self._thread.finished.connect(self._on_thread_finished)
         self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.finished.connect(
+            lambda t=self._thread: self._on_download_thread_finished(t)
+        )
+        AssetDetailsScreen._active_threads.add(self._thread)
 
         self._thread.start()
 
-    def _on_download_finished(self, success, message, target_id):
+    def _on_download_finished(
+        self, success: bool, message: str, target_id: str, generation: int
+    ):
+        # Ignore signals from older, cancelled threads
+        if generation != getattr(self, "_download_generation", 0):
+            return
         # Verify we are still viewing the same game
+        # Guard 1: result is for a game we navigated away from
         if str(target_id) != str(self._current_appid):
+            return
+
+        # Guard 2: the user already cancelled via _cancel_active_download.
+        # _is_busy was set to False there, so we silently discard this late result
+        # rather than showing a confusing error dialog.
+        if not self._is_busy:
             return
 
         self._set_busy(False)
@@ -502,7 +620,10 @@ class AssetDetailsScreen(QWidget):
             # Refresh Missing assets badges on new shortcut added
             self.name_changed.emit()
         else:
-            QMessageBox.critical(self, "Error", message)
+            # "Cancelled" arrives here if abort() raced with the worker finishing
+            # naturally. Either way, no dialog is needed.
+            QMessageBox.critical(self, "Download Failed", message)
+            self.status_opacity_effect.setOpacity(0.0)
 
     def _on_search_finished(self, result, original_query, generation):
         """Populates and fades in the smart suggestion bar."""
@@ -606,6 +727,16 @@ class AssetDetailsScreen(QWidget):
         # Visual/Animation Reset
         if hasattr(self, "suggest_anim"):
             self.suggest_anim.stop()
+
+        # Defuse the timer and stop ghost animations
+        if hasattr(self, "_status_fade_timer") and self._status_fade_timer.isActive():
+            self._status_fade_timer.stop()
+        if (
+            hasattr(self, "status_anim")
+            and self.status_anim.state() == QPropertyAnimation.Running
+        ):
+            self.status_anim.stop()
+
         self.suggestion_opacity.setOpacity(0.0)
         self.suggestion_text.setText("")
         self.suggestion_thumb.setPixmap(QPixmap())
