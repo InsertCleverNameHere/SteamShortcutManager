@@ -1,9 +1,9 @@
-import os
 import json
+import os
 import requests
+import socket
 import threading
 import time
-import socket
 from steam.client import SteamClient
 
 # The base URL for Steam's official assets

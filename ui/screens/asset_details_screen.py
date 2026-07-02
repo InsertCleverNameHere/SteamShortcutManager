@@ -2,32 +2,8 @@ import os
 import shutil
 import threading
 import requests
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QFrame,
-    QGridLayout,
-    QInputDialog,
-    QMessageBox,
-    QCheckBox,
-    QGraphicsOpacityEffect,
-    QSizePolicy,
-    QLineEdit,
-    QFileDialog,
-)
+from PySide6 import QtCore, QtWidgets
 from PySide6.QtGui import QPixmap
-from PySide6.QtCore import (
-    Qt,
-    QThread,
-    QObject,
-    Signal,
-    QPropertyAnimation,
-    QEasingCurve,
-    QTimer,
-)
 from core.vdf_parser import update_shortcut_name, delete_shortcut
 from ui.theme import PALETTE
 from core.steam import get_asset_status
@@ -43,10 +19,10 @@ class SearchState(Enum):
     NOT_FOUND = auto()
 
 
-class SearchWorker(QObject):
+class SearchWorker(QtCore.QObject):
     """Fetches a potential AppID match and its thumbnail in the background."""
 
-    finished = Signal(object, str, int)
+    finished = QtCore.Signal(object, str, int)
 
     def __init__(self, query, generation):
         super().__init__()
@@ -87,11 +63,11 @@ class SearchWorker(QObject):
         self.finished.emit(result, self.query, self.generation)
 
 
-class DownloadWorker(QObject):
+class DownloadWorker(QtCore.QObject):
     """Handles the heavy network lifting in a separate thread."""
 
-    finished = Signal(bool, str, str, int)
-    status_update = Signal(str)
+    finished = QtCore.Signal(bool, str, str, int)
+    status_update = QtCore.Signal(str)
 
     def __init__(self, steam_id, local_id, grid_dir, force, generation):
         super().__init__()
@@ -130,37 +106,37 @@ class DownloadWorker(QObject):
         self.finished.emit(success, message, self.local_id, self.generation)
 
 
-class AssetSlot(QWidget):
+class AssetSlot(QtWidgets.QWidget):
     """A persistent widget representing a single asset (Capsule, Hero, etc.)."""
 
-    manual_upload_requested = Signal(str)
+    manual_upload_requested = QtCore.Signal(str)
 
     def __init__(self, key, parent=None):
         super().__init__(parent)
         self.key = key
         self.setFixedWidth(320)
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Preferred)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
         self.setToolTip(f"Click to manually upload {key.upper()}")
 
-        layout = QVBoxLayout(self)
+        layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
-        layout.setAlignment(Qt.AlignTop)
+        layout.setAlignment(QtCore.Qt.AlignTop)
 
-        self.title_label = QLabel(key.upper())
+        self.title_label = QtWidgets.QLabel(key.upper())
         self.title_label.setStyleSheet(
             f"font-size: 12px; font-weight: 900; letter-spacing: 1.5px; color: {PALETTE['accent']}; background: transparent;"
         )
         layout.addWidget(self.title_label)
 
-        self.content_label = QLabel()
+        self.content_label = QtWidgets.QLabel()
         self.content_label.setMinimumHeight(160)
-        self.content_label.setAlignment(Qt.AlignTop)
+        self.content_label.setAlignment(QtCore.Qt.AlignTop)
         layout.addWidget(self.content_label)
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == QtCore.Qt.LeftButton:
             self.manual_upload_requested.emit(self.key)
 
     def update_slot(self, exists, path):
@@ -177,7 +153,10 @@ class AssetSlot(QWidget):
                 if not pix.isNull():
                     self.content_label.setPixmap(
                         pix.scaled(
-                            320, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                            320,
+                            160,
+                            QtCore.Qt.KeepAspectRatio,
+                            QtCore.Qt.SmoothTransformation,
                         )
                     )
                 self.content_label.setText("")
@@ -190,9 +169,9 @@ class AssetSlot(QWidget):
             )
 
 
-class AssetDetailsScreen(QWidget):
-    back_requested = Signal()
-    name_changed = Signal()
+class AssetDetailsScreen(QtWidgets.QWidget):
+    back_requested = QtCore.Signal()
+    name_changed = QtCore.Signal()
 
     _active_threads = set()
 
@@ -215,7 +194,7 @@ class AssetDetailsScreen(QWidget):
 
         if is_busy:
             # Re-create the effect to make sure it stays alive for the next cycle
-            self._back_dim_effect = QGraphicsOpacityEffect(self)
+            self._back_dim_effect = QtWidgets.QGraphicsOpacityEffect(self)
             self._back_dim_effect.setOpacity(0.4)
             self.back_btn.setGraphicsEffect(self._back_dim_effect)
 
@@ -237,7 +216,7 @@ class AssetDetailsScreen(QWidget):
                 QPushButton:pressed {{ background-color: #c04040; }}
             """)
         else:
-            self.back_btn.setGraphicsEffect(None)
+            self.back_btn.setGraphicsEffect(None)  # type: ignore
 
             # Swap back Cancel ↔ Inject
             self.inject_btn.setText("↓ Inject from Steam")
@@ -278,14 +257,14 @@ class AssetDetailsScreen(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        self.main_layout = QVBoxLayout(self)
+        self.main_layout = QtWidgets.QVBoxLayout(self)
         self.main_layout.setContentsMargins(24, 24, 24, 24)
 
         # --- Row 1: Toolbox (Back, Match, Status, Controls) ---
-        toolbox_row = QHBoxLayout()
+        toolbox_row = QtWidgets.QHBoxLayout()
         toolbox_row.setSpacing(5)
 
-        self.back_btn = QPushButton("← Back")
+        self.back_btn = QtWidgets.QPushButton("← Back")
         self.back_btn.setObjectName("secondary")
         self.back_btn.setFixedSize(80, 35)
         # Route through _on_back_clicked — it aborts any active download first.
@@ -293,7 +272,7 @@ class AssetDetailsScreen(QWidget):
         toolbox_row.addWidget(self.back_btn)
 
         # Smart Suggestion Badge
-        self.suggestion_widget = QFrame()
+        self.suggestion_widget = QtWidgets.QFrame()
         self.suggestion_widget.setFixedHeight(35)
         self.suggestion_widget.setFixedWidth(140)
         self.suggestion_widget.setStyleSheet(f"""
@@ -303,11 +282,11 @@ class AssetDetailsScreen(QWidget):
                 border-radius: 4px;
             }}
         """)
-        self.suggestion_layout = QHBoxLayout(self.suggestion_widget)
+        self.suggestion_layout = QtWidgets.QHBoxLayout(self.suggestion_widget)
         self.suggestion_layout.setContentsMargins(4, 0, 10, 0)
         self.suggestion_layout.setSpacing(8)
 
-        self.suggestion_thumb = QLabel()
+        self.suggestion_thumb = QtWidgets.QLabel()
         self.suggestion_thumb.setFixedSize(80, 28)
         self.suggestion_thumb.setScaledContents(True)
         self.suggestion_thumb.setStyleSheet(
@@ -315,13 +294,15 @@ class AssetDetailsScreen(QWidget):
         )
         self.suggestion_layout.addWidget(self.suggestion_thumb)
 
-        self.suggestion_text = QLabel("")
+        self.suggestion_text = QtWidgets.QLabel("")
         self.suggestion_text.setStyleSheet(
             f"color: {PALETTE['accent']}; font-size: 11px; font-weight: 800; border: none; background: transparent;"
         )
         self.suggestion_layout.addWidget(self.suggestion_text)
 
-        self.suggestion_opacity = QGraphicsOpacityEffect(self.suggestion_widget)
+        self.suggestion_opacity = QtWidgets.QGraphicsOpacityEffect(
+            self.suggestion_widget
+        )
         self.suggestion_widget.setGraphicsEffect(self.suggestion_opacity)
         self.suggestion_opacity.setOpacity(0.0)
         toolbox_row.addWidget(self.suggestion_widget)
@@ -329,15 +310,15 @@ class AssetDetailsScreen(QWidget):
         # This stretch pushes the controls to the far right
         toolbox_row.addStretch()
 
-        self.status_label = QLabel("")
+        self.status_label = QtWidgets.QLabel("")
         self.status_label.setStyleSheet(
             f"color: {PALETTE['text_primary']}; font-size: 11px; font-weight: bold; margin-left: 10px;"
         )
-        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.status_label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
         self.status_label.setFixedWidth(200)
         toolbox_row.addWidget(self.status_label)
 
-        self.force_cb = QCheckBox("Force Overwrite")
+        self.force_cb = QtWidgets.QCheckBox("Force Overwrite")
         self.force_cb.setStyleSheet(
             f"color: {PALETTE['text_secondary']}; font-size: 11px;"
         )
@@ -345,15 +326,15 @@ class AssetDetailsScreen(QWidget):
         toolbox_row.addWidget(self.force_cb)
 
         # Inject button — shown in normal state, hidden while downloading
-        self.inject_btn = QPushButton("↓ Inject from Steam")
+        self.inject_btn = QtWidgets.QPushButton("↓ Inject from Steam")
         self.inject_btn.setFixedWidth(160)
         self.inject_btn.clicked.connect(self._on_inject_clicked)
         toolbox_row.addWidget(self.inject_btn)
 
         # Delete button
-        self.delete_btn = QPushButton("🗑️")
+        self.delete_btn = QtWidgets.QPushButton("🗑️")
         self.delete_btn.setFixedSize(40, 40)
-        self.delete_btn.setCursor(Qt.PointingHandCursor)
+        self.delete_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self.delete_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
@@ -373,20 +354,22 @@ class AssetDetailsScreen(QWidget):
         self.main_layout.addSpacing(20)
 
         # --- Row 2: Game Title ---
-        title_row = QHBoxLayout()
+        title_row = QtWidgets.QHBoxLayout()
         title_row.addStretch()  # Left spacer
 
         # The Display Label
-        self.title_label = QLabel("Asset Details")
+        self.title_label = QtWidgets.QLabel("Asset Details")
         self.title_label.setObjectName("heading")
         self.title_label.setWordWrap(True)
         self.title_label.setFixedWidth(600)  # Fix width to prevent window stretching
         self.title_label.setMinimumHeight(70)  # Fix height too
-        self.title_label.setAlignment(Qt.AlignCenter)  # Center text within the label
+        self.title_label.setAlignment(
+            QtCore.Qt.AlignCenter
+        )  # Center text within the label
         title_row.addWidget(self.title_label)
 
         # Edit Input
-        self.title_edit = QLineEdit()
+        self.title_edit = QtWidgets.QLineEdit()
         self.title_edit.setFixedWidth(400)
         self.title_edit.setVisible(False)
         self.title_edit.setStyleSheet(f"""
@@ -399,9 +382,9 @@ class AssetDetailsScreen(QWidget):
         title_row.addWidget(self.title_edit)
 
         # The Edit/Save Button
-        self.edit_btn = QPushButton("🖊️")
+        self.edit_btn = QtWidgets.QPushButton("🖊️")
         self.edit_btn.setFixedSize(40, 40)
-        self.edit_btn.setCursor(Qt.PointingHandCursor)
+        self.edit_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self.edit_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
@@ -423,7 +406,7 @@ class AssetDetailsScreen(QWidget):
         self.main_layout.addSpacing(40)
 
         # Asset Grid
-        self.grid = QGridLayout()
+        self.grid = QtWidgets.QGridLayout()
         self.grid.setSpacing(0)
         self.grid.setColumnStretch(0, 1)
         self.grid.setColumnStretch(1, 1)
@@ -441,24 +424,24 @@ class AssetDetailsScreen(QWidget):
             slot = AssetSlot(key)
             slot.manual_upload_requested.connect(self._on_manual_upload)
             self._asset_slots[key] = slot
-            alignment = Qt.AlignLeft if col == 0 else Qt.AlignRight
-            self.grid.addWidget(slot, row, col, alignment | Qt.AlignTop)
+            alignment = QtCore.Qt.AlignLeft if col == 0 else QtCore.Qt.AlignRight
+            self.grid.addWidget(slot, row, col, alignment | QtCore.Qt.AlignTop)
 
         self.main_layout.addLayout(self.grid)
         self.main_layout.addStretch()
 
         # Attach opacity effects for animations
-        self.btn_opacity_effect = QGraphicsOpacityEffect(self.inject_btn)
+        self.btn_opacity_effect = QtWidgets.QGraphicsOpacityEffect(self.inject_btn)
         self.inject_btn.setGraphicsEffect(self.btn_opacity_effect)
 
-        self.status_opacity_effect = QGraphicsOpacityEffect(self.status_label)
+        self.status_opacity_effect = QtWidgets.QGraphicsOpacityEffect(self.status_label)
         self.status_label.setGraphicsEffect(self.status_opacity_effect)
 
         # Initial states
         self.status_opacity_effect.setOpacity(0.0)
         self.btn_opacity_effect.setOpacity(1.0)
         # Persistent, cancellable timer for status fades
-        self._status_fade_timer = QTimer(self)
+        self._status_fade_timer = QtCore.QTimer(self)
         self._status_fade_timer.setSingleShot(True)
         self._status_fade_timer.timeout.connect(self._fade_out_status)
 
@@ -476,12 +459,12 @@ class AssetDetailsScreen(QWidget):
         self._status_fade_timer.start(2000)
 
     def _fade_out_status(self) -> None:
-        self.status_anim = QPropertyAnimation(
+        self.status_anim = QtCore.QPropertyAnimation(
             self.status_opacity_effect, b"opacity", self
         )
         self.status_anim.setDuration(400)
         self.status_anim.setEndValue(0.0)
-        self.status_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self.status_anim.setEasingCurve(QtCore.QEasingCurve.InOutQuad)
         self.status_anim.start()
 
     def _update_button_state(self):
@@ -511,19 +494,21 @@ class AssetDetailsScreen(QWidget):
             self.status_label.setText("✅ All assets present")
 
         # 1. Animate Inject Button Opacity
-        self.btn_anim = QPropertyAnimation(self.btn_opacity_effect, b"opacity", self)
+        self.btn_anim = QtCore.QPropertyAnimation(
+            self.btn_opacity_effect, b"opacity", self
+        )
         self.btn_anim.setDuration(250)  # milliseconds
         self.btn_anim.setEndValue(target_btn_opacity)
-        self.btn_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self.btn_anim.setEasingCurve(QtCore.QEasingCurve.InOutQuad)
         self.btn_anim.start()
 
         # 2. Animate Status Label Opacity
-        self.status_anim = QPropertyAnimation(
+        self.status_anim = QtCore.PropertyAnimation(
             self.status_opacity_effect, b"opacity", self
         )
         self.status_anim.setDuration(250)
         self.status_anim.setEndValue(target_status_opacity)
-        self.status_anim.setEasingCurve(QEasingCurve.InOutQuad)
+        self.status_anim.setEasingCurve(QtCore.QEasingCurve.InOutQuad)
         self.status_anim.start()
 
         # Keep the actual functional state
@@ -536,7 +521,7 @@ class AssetDetailsScreen(QWidget):
             return
         # 1. Determine Steam ID and Force state
         default_id = self._suggested_steam_id if self._suggested_steam_id else ""
-        steam_id, ok = QInputDialog.getText(
+        steam_id, ok = QtWidgets.QInputDialog.getText(
             self, "Inject Assets", "Enter Steam AppID:", text=default_id
         )
 
@@ -558,7 +543,7 @@ class AssetDetailsScreen(QWidget):
             self._status_fade_timer.stop()
         if (
             hasattr(self, "status_anim")
-            and self.status_anim.state() == QPropertyAnimation.Running
+            and self.status_anim.state() == QtCore.QPropertyAnimation.Running
         ):
             self.status_anim.stop()
 
@@ -568,7 +553,7 @@ class AssetDetailsScreen(QWidget):
         self.status_label.setText("Initializing...")
 
         # Setup Thread and Worker
-        self._thread = QThread()
+        self._thread = QtCore.QThread()
         grid_dir = os.path.join(os.path.dirname(self._current_shortcuts_path), "grid")
         self._download_generation += 1
         current_gen = self._download_generation
@@ -622,7 +607,7 @@ class AssetDetailsScreen(QWidget):
         else:
             # "Cancelled" arrives here if abort() raced with the worker finishing
             # naturally. Either way, no dialog is needed.
-            QMessageBox.critical(self, "Download Failed", message)
+            QtWidgets.QMessageBox.critical(self, "Download Failed", message)
             self.status_opacity_effect.setOpacity(0.0)
 
     def _on_search_finished(self, result, original_query, generation):
@@ -645,12 +630,12 @@ class AssetDetailsScreen(QWidget):
                     self.suggestion_thumb.hide()
 
             # Use self as parent to prevent GC mid-animation
-            self.suggest_anim = QPropertyAnimation(
+            self.suggest_anim = QtCore.QPropertyAnimation(
                 self.suggestion_opacity, b"opacity", self
             )
             self.suggest_anim.setDuration(400)
             self.suggest_anim.setEndValue(1.0)
-            self.suggest_anim.setEasingCurve(QEasingCurve.OutQuad)
+            self.suggest_anim.setEasingCurve(QtCore.QEasingCurve.OutQuad)
             self.suggest_anim.start()
 
             self.status_label.setText(f"💡 Found Steam Match")
@@ -716,7 +701,7 @@ class AssetDetailsScreen(QWidget):
                     self.name_changed.emit()
                     self._trigger_search(new_name)
                 else:
-                    QMessageBox.warning(self, "Error", msg)
+                    QtWidgets.QMessageBox.warning(self, "Error", msg)
 
             self.title_edit.setVisible(False)
             self.title_label.setVisible(True)
@@ -733,7 +718,7 @@ class AssetDetailsScreen(QWidget):
             self._status_fade_timer.stop()
         if (
             hasattr(self, "status_anim")
-            and self.status_anim.state() == QPropertyAnimation.Running
+            and self.status_anim.state() == QtCore.QPropertyAnimation.Running
         ):
             self.status_anim.stop()
 
@@ -760,7 +745,7 @@ class AssetDetailsScreen(QWidget):
         self.status_label.setText("🔍 Searching Steam...")
 
         # Create the new thread and worker
-        new_thread = QThread()
+        new_thread = QtCore.QThread()
         worker = SearchWorker(game_name, current_gen)
         new_thread.worker = worker
         worker.moveToThread(new_thread)
@@ -783,23 +768,23 @@ class AssetDetailsScreen(QWidget):
     def _on_delete_clicked(self):
 
         # 1. Primary Confirmation
-        reply = QMessageBox.question(
+        reply = QtWidgets.QMessageBox.question(
             self,
             "Confirm Deletion",
             f"Are you sure you want to remove '{self._current_name}' from Steam?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
         )
-        if reply == QMessageBox.No:
+        if reply == QtWidgets.QMessageBox.No:
             return
 
         # 2. Asset Cleanup Option
-        clean_assets = QMessageBox.question(
+        clean_assets = QtWidgets.QMessageBox.question(
             self,
             "Cleanup Assets",
             "Would you also like to delete the associated images and JSON from the grid folder?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.Yes,
         )
 
         # 3. Create Safety Backup
@@ -812,7 +797,7 @@ class AssetDetailsScreen(QWidget):
 
         if success:
             # 5. Optional Asset File Cleanup
-            if clean_assets == QMessageBox.Yes:
+            if clean_assets == QtWidgets.QMessageBox.Yes:
                 grid_dir = os.path.join(os.path.dirname(vdf_path), "grid")
                 # Look for all 5 patterns ({appid}p.jpg, {appid}.jpg, etc.)
                 for suffix in ["p", "", "_hero", "_logo"]:
@@ -830,7 +815,7 @@ class AssetDetailsScreen(QWidget):
             self.name_changed.emit()  # Refresh the main list
             self.back_requested.emit()  # Go back to the list automatically
         else:
-            QMessageBox.critical(self, "Error", msg)
+            QtWidgets.QMessageBox.critical(self, "Error", msg)
 
     def _on_manual_upload(self, asset_type):
         """Opens a file dialog and copies a local image to the Steam grid folder."""
@@ -839,7 +824,7 @@ class AssetDetailsScreen(QWidget):
             return
 
         # 1. Pick the file
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             f"Select {asset_type.capitalize()}",
             "",
@@ -878,4 +863,6 @@ class AssetDetailsScreen(QWidget):
             )
 
         except Exception as e:
-            QMessageBox.critical(self, "Upload Error", f"Failed to copy file: {e}")
+            QtWidgets.QMessageBox.critical(
+                self, "Upload Error", f"Failed to copy file: {e}"
+            )

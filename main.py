@@ -1,5 +1,6 @@
 import sys
 import os
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 from ui.theme import APP_STYLESHEET
 from ui.screens.setup_screen import SetupScreen
@@ -26,8 +27,6 @@ class MainWindow(QMainWindow):
         self.resize(800, 700)
         icon_path = get_resource_path(os.path.join("assets", "icon.ico"))
         if os.path.exists(icon_path):
-            from PySide6.QtGui import QIcon
-
             self.setWindowIcon(QIcon(icon_path))
         self.setStyleSheet(APP_STYLESHEET)
 

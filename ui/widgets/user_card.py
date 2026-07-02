@@ -3,24 +3,22 @@ UserCard — a selectable card showing one discovered shortcuts.vdf file.
 Displays: avatar, persona name (or fallback ID), shortcut count.
 """
 
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QLabel, QFrame
-from PySide6.QtCore import Qt, Signal, QSize
-from PySide6.QtGui import QPixmap, QPainter, QPainterPath, QColor
-
+from PySide6 import QtWidgets, QtGui
+from PySide6.QtCore import Qt, Signal
 from ui.theme import PALETTE
 from core.steam import SteamUserShortcuts
 
 
-def _round_pixmap(pixmap: QPixmap, size: int) -> QPixmap:
+def _round_pixmap(pixmap: QtGui.QPixmap, size: int) -> QtGui.QPixmap:
     """Crop a pixmap into a circular thumbnail."""
     scaled = pixmap.scaled(
         size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
     )
-    output = QPixmap(size, size)
+    output = QtGui.QPixmap(size, size)
     output.fill(Qt.transparent)
-    painter = QPainter(output)
-    painter.setRenderHint(QPainter.Antialiasing)
-    path = QPainterPath()
+    painter = QtGui.QPainter(output)
+    painter.setRenderHint(QtGui.QPainter.Antialiasing)
+    path = QtGui.QPainterPath()
     path.addEllipse(0, 0, size, size)
     painter.setClipPath(path)
     # centre-crop
@@ -31,16 +29,16 @@ def _round_pixmap(pixmap: QPixmap, size: int) -> QPixmap:
     return output
 
 
-def _avatar_placeholder(size: int, initials: str) -> QPixmap:
+def _avatar_placeholder(size: int, initials: str) -> QtGui.QPixmap:
     """Generate a simple coloured circle with initials when no avatar is available."""
-    pixmap = QPixmap(size, size)
+    pixmap = QtGui.QPixmap(size, size)
     pixmap.fill(Qt.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
-    painter.setBrush(QColor(PALETTE["accent_dim"]))
+    painter = QtGui.QPainter(pixmap)
+    painter.setRenderHint(QtGui.QPainter.Antialiasing)
+    painter.setBrush(QtGui.QColor(PALETTE["accent_dim"]))
     painter.setPen(Qt.NoPen)
     painter.drawEllipse(0, 0, size, size)
-    painter.setPen(QColor(PALETTE["text_primary"]))
+    painter.setPen(QtGui.QColor(PALETTE["text_primary"]))
     font = painter.font()
     font.setPixelSize(size // 3)
     font.setBold(True)
@@ -77,7 +75,7 @@ _CARD_SELECTED = f"""
 """
 
 
-class UserCard(QFrame):
+class UserCard(QtWidgets.QFrame):
     """
     Emits `selected(SteamUserShortcuts)` when clicked.
     """
@@ -102,17 +100,17 @@ class UserCard(QFrame):
         self._build_ui()
 
     def _build_ui(self):
-        layout = QHBoxLayout(self)
+        layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(16)
 
         # ── avatar ───────────────────────────────────────────────────────────
-        avatar_label = QLabel()
+        avatar_label = QtWidgets.QLabel()
         avatar_label.setFixedSize(AVATAR_SIZE, AVATAR_SIZE)
         avatar_label.setAttribute(Qt.WA_TranslucentBackground)
 
         if self._user.avatar_path:
-            raw = QPixmap(self._user.avatar_path)
+            raw = QtGui.QPixmap(self._user.avatar_path)
             if not raw.isNull():
                 avatar_label.setPixmap(_round_pixmap(raw, AVATAR_SIZE))
             else:
@@ -127,17 +125,19 @@ class UserCard(QFrame):
         layout.addWidget(avatar_label)
 
         # ── text column ──────────────────────────────────────────────────────
-        text_col = QVBoxLayout()
+        text_col = QtWidgets.QVBoxLayout()
         text_col.setSpacing(4)
         text_col.setContentsMargins(0, 0, 0, 0)
 
-        name_label = QLabel(self._user.persona_name or f"User {self._user.userdata_id}")
+        name_label = QtWidgets.QLabel(
+            self._user.persona_name or f"User {self._user.userdata_id}"
+        )
         name_label.setStyleSheet(
             f"font-size: 15px; font-weight: 600; color: {PALETTE['text_primary']}; background: transparent;"
         )
         text_col.addWidget(name_label)
 
-        id_label = QLabel(f"ID: {self._user.userdata_id}")
+        id_label = QtWidgets.QLabel(f"ID: {self._user.userdata_id}")
         id_label.setStyleSheet(
             f"font-size: 11px; color: {PALETTE['text_muted']}; background: transparent;"
         )
@@ -146,21 +146,21 @@ class UserCard(QFrame):
         layout.addLayout(text_col, 1)
 
         # ── shortcut count badge ─────────────────────────────────────────────
-        count_widget = QWidget()
+        count_widget = QtWidgets.QWidget()
         count_widget.setAttribute(Qt.WA_TranslucentBackground)
-        count_col = QVBoxLayout(count_widget)
+        count_col = QtWidgets.QVBoxLayout(count_widget)
         count_col.setContentsMargins(0, 0, 0, 0)
         count_col.setSpacing(2)
         count_col.setAlignment(Qt.AlignCenter)
 
-        self.count_num = QLabel(str(self._user.shortcut_count))
+        self.count_num = QtWidgets.QLabel(str(self._user.shortcut_count))
         self.count_num.setAlignment(Qt.AlignCenter)
         self.count_num.setStyleSheet(
             f"font-size: 22px; font-weight: 700; color: {PALETTE['accent']}; background: transparent;"
         )
         count_col.addWidget(self.count_num)
 
-        count_lbl = QLabel("shortcuts")
+        count_lbl = QtWidgets.QLabel("shortcuts")
         count_lbl.setAlignment(Qt.AlignCenter)
         count_lbl.setStyleSheet(
             f"font-size: 10px; color: {PALETTE['text_muted']}; background: transparent;"
@@ -170,7 +170,7 @@ class UserCard(QFrame):
         layout.addWidget(count_widget)
 
         # ── arrow ────────────────────────────────────────────────────────────
-        arrow = QLabel("›")
+        arrow = QtWidgets.QLabel("›")
         arrow.setStyleSheet(
             f"font-size: 20px; color: {PALETTE['text_muted']}; background: transparent;"
         )

@@ -4,10 +4,10 @@ All higher-level shortcut manipulation goes here so the rest of the app
 never touches vdf directly.
 """
 
-import vdf
-import zlib
 import os
 import tempfile
+import vdf
+import zlib
 
 
 def load_shortcuts(path: str) -> dict:

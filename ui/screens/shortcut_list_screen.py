@@ -1,38 +1,16 @@
-import shutil
 import os
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QLabel,
-    QScrollArea,
-    QPushButton,
-    QFrame,
-    QLineEdit,
-    QFileDialog,
-    QMessageBox,
-    QInputDialog,
-    QSizePolicy,
-    QMenu,
-)
-from PySide6.QtCore import Qt, Signal, QTimer, QObject, QThread
+import shutil
+from PySide6 import QtWidgets, QtCore
 from PySide6.QtGui import QAction, QActionGroup
-from ui.theme import PALETTE
-from core.vdf_parser import (
-    load_shortcuts,
-    get_shortcut_list,
-    get_value_case_insensitive,
-    normalize_appid,
-    add_new_shortcut,
-)
-from core.steam import get_asset_status
+from core import vdf_parser
 from core.utils_win import resolve_windows_shortcut, get_game_name_from_metadata
+from ui.theme import PALETTE
 
 
-class AddShortcutWorker(QObject):
+class AddShortcutWorker(QtCore.QObject):
     """Resolves file metadata in the background to prevent UI lag."""
 
-    finished = Signal(str, str, str)  # (raw_path, exe_path, derived_name)
+    finished = QtCore.Signal(str, str, str)  # (raw_path, exe_path, derived_name)
 
     def __init__(self, raw_path):
         super().__init__()
@@ -49,10 +27,12 @@ class AddShortcutWorker(QObject):
         self.finished.emit(self.raw_path, exe_path, derived_name)
 
 
-class ShortcutListScreen(QWidget):
-    back_requested = Signal()
-    shortcut_clicked = Signal(str, str, str)  # (game_name, shortcuts_path, appid)
-    user_updated = Signal()
+class ShortcutListScreen(QtWidgets.QWidget):
+    back_requested = QtCore.Signal()
+    shortcut_clicked = QtCore.Signal(
+        str, str, str
+    )  # (game_name, shortcuts_path, appid)
+    user_updated = QtCore.Signal()
 
     @property
     def current_user(self):
@@ -64,19 +44,19 @@ class ShortcutListScreen(QWidget):
         self._card_data = []  # Track widgets and names for filtering
         self._sort_mode = "default"  # "default" | "alpha" | "missing_first"
         self.setAcceptDrops(True)
-        self._search_timer = QTimer()
+        self._search_timer = QtCore.QTimer()
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(200)  # Wait 200ms after last keystroke
         self._search_timer.timeout.connect(self._execute_filter)
         self._build_ui()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
+        layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
 
         # Header
-        header = QHBoxLayout()
-        back_btn = QPushButton("← Back")
+        header = QtWidgets.QHBoxLayout()
+        back_btn = QtWidgets.QPushButton("← Back")
         back_btn.setObjectName("secondary")
         back_btn.setFixedSize(80, 35)
         back_btn.clicked.connect(self.back_requested)
@@ -84,7 +64,7 @@ class ShortcutListScreen(QWidget):
 
         header.addStretch()
 
-        self.title_label = QLabel("Shortcuts")
+        self.title_label = QtWidgets.QLabel("Shortcuts")
         self.title_label.setObjectName("heading")
         self.title_label.setMaximumWidth(300)
         header.addWidget(self.title_label)
@@ -92,7 +72,7 @@ class ShortcutListScreen(QWidget):
         header.addSpacing(10)
 
         # --- Search Bar ---
-        self.search_bar = QLineEdit()
+        self.search_bar = QtWidgets.QLineEdit()
         self.search_bar.setPlaceholderText("🔍 Search by name...")
         self.search_bar.setFixedWidth(170)
         self.search_bar.textChanged.connect(lambda: self._search_timer.start())
@@ -101,7 +81,7 @@ class ShortcutListScreen(QWidget):
         header.addStretch()
 
         # Compact Square Refresh Button
-        self.refresh_btn = QPushButton("↻")
+        self.refresh_btn = QtWidgets.QPushButton("↻")
         self.refresh_btn.setFixedSize(35, 35)  # Strict square dimensions
         self.refresh_btn.setObjectName("secondary")
         self.refresh_btn.setToolTip("Reload library from shortcuts.vdf")
@@ -115,7 +95,7 @@ class ShortcutListScreen(QWidget):
         header.addWidget(self.refresh_btn)
 
         # Compact Square Sort Button
-        self.sort_btn = QPushButton("⇅")
+        self.sort_btn = QtWidgets.QPushButton("⇅")
         self.sort_btn.setFixedSize(35, 35)
         self.sort_btn.setObjectName("secondary")
         self.sort_btn.setToolTip("Sort shortcuts")
@@ -124,7 +104,7 @@ class ShortcutListScreen(QWidget):
         header.addWidget(self.sort_btn)
 
         # Add Shortcut Button
-        self.add_btn = QPushButton("+ Add Shortcut")
+        self.add_btn = QtWidgets.QPushButton("+ Add Shortcut")
         self.add_btn.setFixedWidth(130)
         self.add_btn.setFixedHeight(35)
         self.add_btn.clicked.connect(self._on_add_clicked)
@@ -134,20 +114,20 @@ class ShortcutListScreen(QWidget):
         layout.addSpacing(20)
 
         # Scroll area for shortcuts
-        self.scroll_area = QScrollArea()
+        self.scroll_area = QtWidgets.QScrollArea()
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setFrameShape(QFrame.NoFrame)
+        self.scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.scroll_area.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarAlwaysOff
+            QtCore.Qt.ScrollBarAlwaysOff
         )  # Only vertical scrolling
         # Prevent focus rectangle on scrollbar
-        self.scroll_area.verticalScrollBar().setFocusPolicy(Qt.NoFocus)
+        self.scroll_area.verticalScrollBar().setFocusPolicy(QtCore.Qt.NoFocus)
 
-        self.list_container = QWidget()
-        self.list_layout = QVBoxLayout(self.list_container)
+        self.list_container = QtWidgets.QWidget()
+        self.list_layout = QtWidgets.QVBoxLayout(self.list_container)
         self.list_layout.setContentsMargins(0, 0, 12, 0)
         self.list_layout.setSpacing(4)
-        self.list_layout.setAlignment(Qt.AlignTop)
+        self.list_layout.setAlignment(QtCore.Qt.AlignTop)
 
         self.scroll_area.setWidget(self.list_container)
         layout.addWidget(self.scroll_area)
@@ -167,7 +147,7 @@ class ShortcutListScreen(QWidget):
 
     def _show_sort_menu(self):
         """Builds and shows the sort options popup, anchored to the sort button."""
-        menu = QMenu(self)
+        menu = QtWidgets.QMenu(self)
         group = QActionGroup(menu)
         group.setExclusive(True)
 
@@ -195,7 +175,7 @@ class ShortcutListScreen(QWidget):
         self.load_user_shortcuts(self._current_user_obj)
 
     def _on_add_clicked(self):
-        raw_path, _ = QFileDialog.getOpenFileName(
+        raw_path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             "Select Game",
             "",
@@ -218,7 +198,7 @@ class ShortcutListScreen(QWidget):
         self.refresh_btn.setEnabled(False)
 
         # Start background resolution
-        self._add_thread = QThread()
+        self._add_thread = QtCore.QThread()
         self._add_worker = AddShortcutWorker(raw_path)
         self._add_worker.moveToThread(self._add_thread)
 
@@ -283,7 +263,7 @@ class ShortcutListScreen(QWidget):
         # Re-enable buttons
         self.add_btn.setEnabled(True)
         self.refresh_btn.setEnabled(True)
-        game_name, ok = QInputDialog.getText(
+        game_name, ok = QtWidgets.QInputDialog.getText(
             self, "Add Shortcut", "Enter game name:", text=derived_name
         )
 
@@ -295,7 +275,7 @@ class ShortcutListScreen(QWidget):
                 shutil.copy2(vdf_path, vdf_path + ".bak")
 
             # Save to VDF
-            success, msg, new_id = add_new_shortcut(
+            success, msg, new_id = vdf_parser.add_new_shortcut(
                 vdf_path, game_name, exe_path, icon_path=exe_path
             )
 
@@ -311,7 +291,7 @@ class ShortcutListScreen(QWidget):
                 # Redirect to details
                 self.shortcut_clicked.emit(game_name, vdf_path, new_id)
             else:
-                QMessageBox.critical(self, "Error", msg)
+                QtWidgets.QMessageBox.critical(self, "Error", msg)
 
     @staticmethod
     def _asset_complete(appid: str, grid_files: set) -> bool:
@@ -347,14 +327,14 @@ class ShortcutListScreen(QWidget):
 
         # Load the data
         try:
-            data = load_shortcuts(user_obj.shortcuts_path)
-            shortcuts = get_shortcut_list(data)
+            data = vdf_parser.load_shortcuts(user_obj.shortcuts_path)
+            shortcuts = vdf_parser.get_shortcut_list(data)
 
             # Apply the selected sort order
             if self._sort_mode == "alpha":
                 shortcuts = sorted(
                     shortcuts,
-                    key=lambda s: get_value_case_insensitive(
+                    key=lambda s: vdf_parser.get_value_case_insensitive(
                         s, "AppName", "Unknown Game"
                     ).lower(),
                 )
@@ -362,7 +342,9 @@ class ShortcutListScreen(QWidget):
                 shortcuts = sorted(
                     shortcuts,
                     key=lambda s: self._asset_complete(
-                        normalize_appid(get_value_case_insensitive(s, "appid", "0")),
+                        vdf_parser.normalize_appid(
+                            vdf_parser.get_value_case_insensitive(s, "appid", "0")
+                        ),
                         grid_files,
                     ),
                 )
@@ -371,26 +353,26 @@ class ShortcutListScreen(QWidget):
             self.user_updated.emit()  # Notify the rest of the app
 
             if not shortcuts:
-                empty_container = QWidget()
-                empty_layout = QVBoxLayout(empty_container)
-                empty_layout.setAlignment(Qt.AlignCenter)
+                empty_container = QtWidgets.QWidget()
+                empty_layout = QtWidgets.QVBoxLayout(empty_container)
+                empty_layout.setAlignment(QtCore.Qt.AlignCenter)
                 empty_layout.setContentsMargins(0, 80, 0, 0)
                 empty_layout.setSpacing(10)
 
-                icon_lbl = QLabel("📂")
+                icon_lbl = QtWidgets.QLabel("📂")
                 icon_lbl.setStyleSheet("font-size: 48px; background: transparent;")
-                icon_lbl.setAlignment(Qt.AlignCenter)
+                icon_lbl.setAlignment(QtCore.Qt.AlignCenter)
 
-                msg_lbl = QLabel("No shortcuts found")
+                msg_lbl = QtWidgets.QLabel("No shortcuts found")
                 msg_lbl.setObjectName("heading")
-                msg_lbl.setAlignment(Qt.AlignCenter)
+                msg_lbl.setAlignment(QtCore.Qt.AlignCenter)
 
-                sub_lbl = QLabel(
+                sub_lbl = QtWidgets.QLabel(
                     "This Steam profile doesn't have any non-Steam games yet.\n"
                     "Click '+ Add Shortcut' to get started."
                 )
                 sub_lbl.setObjectName("subheading")
-                sub_lbl.setAlignment(Qt.AlignCenter)
+                sub_lbl.setAlignment(QtCore.Qt.AlignCenter)
                 sub_lbl.setStyleSheet(
                     f"color: {PALETTE['text_muted']}; background: transparent;"
                 )
@@ -402,17 +384,21 @@ class ShortcutListScreen(QWidget):
 
             for s in shortcuts:
                 # 1. Extract Data
-                name = get_value_case_insensitive(s, "AppName", "Unknown Game")
-                raw_appid = get_value_case_insensitive(s, "appid", "0")
-                appid = normalize_appid(raw_appid)
-                exe_path = get_value_case_insensitive(s, "Exe", "No Path Found")
+                name = vdf_parser.get_value_case_insensitive(
+                    s, "AppName", "Unknown Game"
+                )
+                raw_appid = vdf_parser.get_value_case_insensitive(s, "appid", "0")
+                appid = vdf_parser.normalize_appid(raw_appid)
+                exe_path = vdf_parser.get_value_case_insensitive(
+                    s, "Exe", "No Path Found"
+                )
 
                 # 2. Check Assets
                 is_complete = self._asset_complete(appid, grid_files)
 
                 # 3. Build Card
-                card = QFrame()
-                card.setCursor(Qt.PointingHandCursor)
+                card = QtWidgets.QFrame()
+                card.setCursor(QtCore.Qt.PointingHandCursor)
                 card.setStyleSheet(
                     f"background: {PALETTE['bg_card']}; border: 1px solid {PALETTE['border']}; border-radius: 6px; padding: 8px;"
                 )
@@ -420,19 +406,19 @@ class ShortcutListScreen(QWidget):
                 card.mousePressEvent = lambda e, n=name, p=user_obj.shortcuts_path, i=appid: self.shortcut_clicked.emit(
                     n, p, i
                 )
-                card_layout = QVBoxLayout(card)
+                card_layout = QtWidgets.QVBoxLayout(card)
                 card_layout.setSpacing(2)  # Tighten space between title and subtitle
 
                 # Title Row
-                title_row = QHBoxLayout()
-                title_lbl = QLabel(name)
+                title_row = QtWidgets.QHBoxLayout()
+                title_lbl = QtWidgets.QLabel(name)
                 # Reduced font from 15px to 14px
                 title_lbl.setStyleSheet(
                     f"font-size: 14px; font-weight: bold; color: {PALETTE['text_primary']}; border: none; background: transparent;"
                 )
                 title_row.addWidget(title_lbl)
                 if not is_complete:
-                    flag = QLabel("⚠ Missing Assets")
+                    flag = QtWidgets.QLabel("⚠ Missing Assets")
                     flag.setStyleSheet(
                         f"color: {PALETTE['warning']}; font-size: 10px; font-weight: bold; background: transparent;"
                     )
@@ -443,14 +429,14 @@ class ShortcutListScreen(QWidget):
 
                 # Subtitle (AppID and Exe Path)
                 sub_text = f"AppID: {appid}  •  {exe_path}"
-                sub_lbl = QLabel(sub_text)
+                sub_lbl = QtWidgets.QLabel(sub_text)
                 sub_lbl.setStyleSheet(
                     f"font-size: 11px; color: {PALETTE['text_muted']}; border: none; background: transparent;"
                 )
                 sub_lbl.setWordWrap(False)  # Keep it on one line for a cleaner look
                 sub_lbl.setMaximumWidth(650)
                 sub_lbl.setSizePolicy(
-                    QSizePolicy.Ignored, QSizePolicy.Preferred
+                    QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred
                 )  # Allow horizontal shrinking
                 card_layout.addWidget(sub_lbl)
 
@@ -460,7 +446,7 @@ class ShortcutListScreen(QWidget):
                 self.list_layout.addWidget(card)
 
         except Exception as e:
-            error_lbl = QLabel(f"Error loading shortcuts: {e}")
+            error_lbl = QtWidgets.QLabel(f"Error loading shortcuts: {e}")
             error_lbl.setStyleSheet(f"color: {PALETTE['danger']};")
             self.list_layout.addWidget(error_lbl)
 
