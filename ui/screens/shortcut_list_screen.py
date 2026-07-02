@@ -207,6 +207,8 @@ class ShortcutListScreen(QWidget):
                     # Signal the LibraryScreen (UserCard) to refresh its label
                     self.user_updated.emit()
 
+                # Rebuild the local list of shortcut cards to include the new game
+                self.load_user_shortcuts(self._current_user_obj)
                 # Redirect to details
                 self.shortcut_clicked.emit(game_name, vdf_path, new_id)
             else:

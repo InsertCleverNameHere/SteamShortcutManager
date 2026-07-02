@@ -7,6 +7,7 @@ never touches vdf directly.
 import vdf
 import zlib
 import os
+import tempfile
 
 
 def load_shortcuts(path: str) -> dict:
@@ -23,9 +24,36 @@ def load_shortcuts(path: str) -> dict:
 
 
 def save_shortcuts(path: str, data: dict) -> None:
-    """Write a shortcuts dict back to a binary shortcuts.vdf."""
-    with open(path, "wb") as f:
-        vdf.binary_dump(data, f)
+    """
+    Write a shortcuts dict back to a binary shortcuts.vdf atomically.
+
+    Writes to a temp file in the same directory first, flushes it to disk,
+    then swaps it into place with os.replace(). This guarantees the target
+    file is either the old complete version or the new complete version —
+    never a partially-written/truncated file, even if the process crashes
+    or the disk fills up mid-write.
+    """
+    target_dir = os.path.dirname(path) or "."
+    os.makedirs(target_dir, exist_ok=True)
+
+    fd, tmp_path = tempfile.mkstemp(
+        dir=target_dir, prefix=".shortcuts_", suffix=".vdf.tmp"
+    )
+    try:
+        with os.fdopen(fd, "wb") as f:
+            vdf.binary_dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())  # force write from OS buffer to physical disk
+
+        os.replace(tmp_path, path)  # atomic on Windows and POSIX
+    except Exception:
+        # Clean up the temp file if anything went wrong before the swap
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        raise
 
 
 def get_shortcut_list(data: dict) -> list[dict]:
