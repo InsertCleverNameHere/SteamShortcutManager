@@ -13,8 +13,10 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QInputDialog,
     QSizePolicy,
+    QMenu,
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QObject, QThread
+from PySide6.QtGui import QAction, QActionGroup
 from ui.theme import PALETTE
 from core.vdf_parser import (
     load_shortcuts,
@@ -60,6 +62,7 @@ class ShortcutListScreen(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._card_data = []  # Track widgets and names for filtering
+        self._sort_mode = "default"  # "default" | "alpha" | "missing_first"
         self._search_timer = QTimer()
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(200)  # Wait 200ms after last keystroke
@@ -85,12 +88,12 @@ class ShortcutListScreen(QWidget):
         self.title_label.setMaximumWidth(300)
         header.addWidget(self.title_label)
 
-        header.addSpacing(20)
+        header.addSpacing(10)
 
         # --- Search Bar ---
         self.search_bar = QLineEdit()
         self.search_bar.setPlaceholderText("🔍 Search by name...")
-        self.search_bar.setFixedWidth(200)
+        self.search_bar.setFixedWidth(170)
         self.search_bar.textChanged.connect(lambda: self._search_timer.start())
         header.addWidget(self.search_bar)
 
@@ -109,6 +112,15 @@ class ShortcutListScreen(QWidget):
             lambda: self.load_user_shortcuts(self._current_user_obj)
         )
         header.addWidget(self.refresh_btn)
+
+        # Compact Square Sort Button
+        self.sort_btn = QPushButton("⇅")
+        self.sort_btn.setFixedSize(35, 35)
+        self.sort_btn.setObjectName("secondary")
+        self.sort_btn.setToolTip("Sort shortcuts")
+        self.sort_btn.setStyleSheet("font-size: 16px; padding: 0px; font-weight: bold;")
+        self.sort_btn.clicked.connect(self._show_sort_menu)
+        header.addWidget(self.sort_btn)
 
         # Add Shortcut Button
         self.add_btn = QPushButton("+ Add Shortcut")
@@ -151,6 +163,35 @@ class ShortcutListScreen(QWidget):
 
         # 2. Surgical Addition: Resume and redraw once at the end
         self.list_container.setUpdatesEnabled(True)
+
+    def _show_sort_menu(self):
+        """Builds and shows the sort options popup, anchored to the sort button."""
+        menu = QMenu(self)
+        group = QActionGroup(menu)
+        group.setExclusive(True)
+
+        options = [
+            ("default", "File order"),
+            ("alpha", "Alphabetical (A–Z)"),
+            ("missing_first", "Missing assets first"),
+        ]
+
+        for mode, label in options:
+            action = QAction(label, menu)
+            action.setCheckable(True)
+            action.setChecked(self._sort_mode == mode)
+            action.triggered.connect(lambda checked, m=mode: self._on_sort_selected(m))
+            group.addAction(action)
+            menu.addAction(action)
+
+        # Anchor the menu directly under the button, left-aligned to it
+        menu.exec(self.sort_btn.mapToGlobal(self.sort_btn.rect().bottomLeft()))
+
+    def _on_sort_selected(self, mode: str):
+        if mode == self._sort_mode:
+            return
+        self._sort_mode = mode
+        self.load_user_shortcuts(self._current_user_obj)
 
     def _on_add_clicked(self):
         raw_path, _ = QFileDialog.getOpenFileName(
@@ -214,6 +255,16 @@ class ShortcutListScreen(QWidget):
             else:
                 QMessageBox.critical(self, "Error", msg)
 
+    @staticmethod
+    def _asset_complete(appid: str, grid_files: set) -> bool:
+        return (
+            any(f"{appid}p{e}" in grid_files for e in (".jpg", ".png"))
+            and any(f"{appid}{e}" in grid_files for e in (".jpg", ".png"))
+            and any(f"{appid}_hero{e}" in grid_files for e in (".jpg", ".png"))
+            and any(f"{appid}_logo{e}" in grid_files for e in (".png", ".jpg"))
+            and f"{appid}.json" in grid_files
+        )
+
     def load_user_shortcuts(self, user_obj):
         """Called when a user is selected in the main menu."""
         # Store the current user object so the Add button knows which VDF to edit
@@ -240,6 +291,23 @@ class ShortcutListScreen(QWidget):
         try:
             data = load_shortcuts(user_obj.shortcuts_path)
             shortcuts = get_shortcut_list(data)
+
+            # Apply the selected sort order
+            if self._sort_mode == "alpha":
+                shortcuts = sorted(
+                    shortcuts,
+                    key=lambda s: get_value_case_insensitive(
+                        s, "AppName", "Unknown Game"
+                    ).lower(),
+                )
+            elif self._sort_mode == "missing_first":
+                shortcuts = sorted(
+                    shortcuts,
+                    key=lambda s: self._asset_complete(
+                        normalize_appid(get_value_case_insensitive(s, "appid", "0")),
+                        grid_files,
+                    ),
+                )
             # Sync the count back to the user object
             self._current_user_obj.shortcut_count = len(shortcuts)
             self.user_updated.emit()  # Notify the rest of the app
@@ -282,13 +350,7 @@ class ShortcutListScreen(QWidget):
                 exe_path = get_value_case_insensitive(s, "Exe", "No Path Found")
 
                 # 2. Check Assets
-                is_complete = (
-                    any(f"{appid}p{e}" in grid_files for e in (".jpg", ".png"))
-                    and any(f"{appid}{e}" in grid_files for e in (".jpg", ".png"))
-                    and any(f"{appid}_hero{e}" in grid_files for e in (".jpg", ".png"))
-                    and any(f"{appid}_logo{e}" in grid_files for e in (".png", ".jpg"))
-                    and f"{appid}.json" in grid_files
-                )
+                is_complete = self._asset_complete(appid, grid_files)
 
                 # 3. Build Card
                 card = QFrame()
