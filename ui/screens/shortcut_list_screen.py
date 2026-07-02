@@ -63,6 +63,7 @@ class ShortcutListScreen(QWidget):
         super().__init__(parent)
         self._card_data = []  # Track widgets and names for filtering
         self._sort_mode = "default"  # "default" | "alpha" | "missing_first"
+        self.setAcceptDrops(True)
         self._search_timer = QTimer()
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(200)  # Wait 200ms after last keystroke
@@ -202,6 +203,15 @@ class ShortcutListScreen(QWidget):
         )
         if not raw_path:
             return
+        self._start_add_from_path(raw_path)
+
+    def _start_add_from_path(self, raw_path: str):
+        """
+        Kicks off background metadata resolution for a given exe/lnk path.
+        Shared entry point for both the file-dialog Add flow and drag-and-drop.
+        """
+        if not self.add_btn.isEnabled():
+            return
 
         # Ensure refresh button is disabled during resolution
         self.add_btn.setEnabled(False)
@@ -219,6 +229,54 @@ class ShortcutListScreen(QWidget):
         self._add_thread.finished.connect(self._add_thread.deleteLater)
 
         self._add_thread.start()
+
+    _DROPPABLE_EXTENSIONS = (".exe", ".lnk")
+
+    def _extract_droppable_path(self, mime_data) -> str | None:
+        """
+        Returns the local file path if the drop contains exactly one valid
+        .exe/.lnk file. Returns None for empty drops, multi-file drops, or
+        drops containing anything else — multi-file is rejected outright
+        rather than silently picking one, so the user gets clear "no-drop"
+        feedback instead of an ambiguous partial success.
+        """
+        if not mime_data.hasUrls():
+            return None
+
+        urls = mime_data.urls()
+        if len(urls) != 1:
+            return None
+
+        url = urls[0]
+        if not url.isLocalFile():
+            return None
+
+        path = url.toLocalFile()
+        if path.lower().endswith(self._DROPPABLE_EXTENSIONS) and os.path.isfile(path):
+            return path
+        return None
+
+    def dragEnterEvent(self, event):
+        if self._extract_droppable_path(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        # Required alongside dragEnterEvent on some platforms/Qt versions
+        # for the drop to actually register during mouse movement.
+        if self._extract_droppable_path(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        path = self._extract_droppable_path(event.mimeData())
+        if not path:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        self._start_add_from_path(path)
 
     def _on_shortcut_resolved(self, raw_path, exe_path, derived_name):
         """Continues the Add Shortcut flow after background resolution."""
