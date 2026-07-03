@@ -503,7 +503,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self.btn_anim.start()
 
         # 2. Animate Status Label Opacity
-        self.status_anim = QtCore.PropertyAnimation(
+        self.status_anim = QtCore.QPropertyAnimation(
             self.status_opacity_effect, b"opacity", self
         )
         self.status_anim.setDuration(250)
