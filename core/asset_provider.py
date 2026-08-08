@@ -188,8 +188,9 @@ def download_assets(
             img_hash_path = asset_entry.get("image", {}).get("english")
 
             if img_hash_path:
-                safe_hash = os.path.basename(img_hash_path)
-                url = f"{CDN_BASE}/{steam_appid}/{safe_hash}"
+                # Sanitize path while keeping the hash subfolder intact
+                clean_path = img_hash_path.lstrip("/").replace("\\", "/")
+                url = f"{CDN_BASE}/{steam_appid}/{clean_path}"
             else:
                 url = f"{CDN_BASE}/{steam_appid}/{default_name}"
 
