@@ -1,15 +1,21 @@
 import os
 import shutil
 import threading
+from enum import Enum, auto
+from urllib.parse import urlparse
+
 import requests
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtGui import QPixmap
-from core.vdf_parser import update_shortcut_name, delete_shortcut
-from ui.theme import PALETTE
-from core.steam import get_asset_status
+
 from core.asset_provider import download_assets, search_steam_apps
-from enum import Enum, auto
-from urllib.parse import urlparse
+from core.log import get_logger
+from core.steam import get_asset_status
+from core.vdf_parser import delete_shortcut, update_shortcut_name
+from ui.theme import PALETTE
+from ui.widgets.steam_guard import confirm_steam_closed
+
+logger = get_logger("asset_details_screen")
 
 
 class SearchState(Enum):
@@ -42,7 +48,7 @@ class SearchWorker(QtCore.QObject):
                 parsed = urlparse(url)
                 trusted_domains = (".steampowered.com", ".steamstatic.com")
                 if not parsed.netloc.endswith(trusted_domains):
-                    print(f"DEBUG: Blocked untrusted thumbnail URL: {url}")
+                    logger.warning(f"Blocked untrusted thumbnail URL: {url}")
                     result["thumb_bytes"] = None
                 else:
                     headers = {
@@ -55,7 +61,7 @@ class SearchWorker(QtCore.QObject):
                     else:
                         result["thumb_bytes"] = None
             except Exception as e:
-                print(f"DEBUG: Thumbnail download error: {e}")
+                logger.warning(f"Thumbnail download error: {e}")
                 # Use .get() or check type before setting to be safe
                 if isinstance(result, dict):
                     result["thumb_bytes"] = None
@@ -246,7 +252,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self._search_thread = None
         self._worker = None
         self._suggested_steam_id = None
-        self._current_appid = None
+        self._current_appid: str = ""
         self._current_shortcuts_path = ""
         self._current_name = ""
         self._search_generation = 0
@@ -277,7 +283,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self.suggestion_widget.setFixedWidth(140)
         self.suggestion_widget.setStyleSheet(f"""
             QFrame {{
-                background: {PALETTE['bg_card']}; 
+                background: {PALETTE['bg_card']};
                 border: 1px solid {PALETTE['border']};
                 border-radius: 4px;
             }}
@@ -373,8 +379,8 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self.title_edit.setFixedWidth(400)
         self.title_edit.setVisible(False)
         self.title_edit.setStyleSheet(f"""
-            font-size: 22px; 
-            font-weight: 700; 
+            font-size: 22px;
+            font-weight: 700;
             color: {PALETTE['text_primary']};
             background: {PALETTE['bg_surface']};
             border: 1px solid {PALETTE['accent']};
@@ -519,6 +525,10 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         if self._is_busy:
             self._cancel_active_download()
             return
+
+        if not confirm_steam_closed(self):
+            return
+
         # 1. Determine Steam ID and Force state
         default_id = self._suggested_steam_id if self._suggested_steam_id else ""
         steam_id, ok = QtWidgets.QInputDialog.getText(
@@ -638,7 +648,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             self.suggest_anim.setEasingCurve(QtCore.QEasingCurve.OutQuad)
             self.suggest_anim.start()
 
-            self.status_label.setText(f"💡 Found Steam Match")
+            self.status_label.setText("💡 Found Steam Match")
         elif result == "ERR_NETWORK":
             self._search_state = SearchState.NOT_FOUND
             self._suggested_steam_id = None
@@ -677,10 +687,8 @@ class AssetDetailsScreen(QtWidgets.QWidget):
 
         # Case: Transitioning from View to Edit
         if not self.title_edit.isVisible():
-            # Trigger Backup immediately upon deciding to edit
-            vdf_path = self._current_shortcuts_path
-            if os.path.exists(vdf_path):
-                shutil.copy2(vdf_path, vdf_path + ".bak")
+            if not confirm_steam_closed(self):
+                return
 
             self.title_edit.setText(self._current_name)
             self.title_label.setVisible(False)
@@ -691,7 +699,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         # Case: Finalizing Changes (Transitioning from Edit to View)
         else:
             new_name = self.title_edit.text().strip()
-            if new_name and new_name != self._current_name:
+            if self._current_appid and new_name and new_name != self._current_name:
                 success, msg = update_shortcut_name(
                     self._current_shortcuts_path, self._current_appid, new_name
                 )
@@ -733,8 +741,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
                 # Disconnect UI slots so the old thread cannot update this screen
                 self._search_thread.worker.finished.disconnect(self._on_search_finished)
             except (AttributeError, TypeError, RuntimeError) as e:
-                print(f"DEBUG: Signal disconnect error: {e}")
-                pass
+                logger.debug(f"Signal disconnect error: {e}")
             # Move to registry so Python doesn't delete the C++ object mid-run
             AssetDetailsScreen._active_threads.add(self._search_thread)
 
@@ -766,6 +773,11 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self._search_thread.start()
 
     def _on_delete_clicked(self):
+        if not self._current_appid:
+            return
+
+        if not confirm_steam_closed(self):
+            return
 
         # 1. Primary Confirmation
         reply = QtWidgets.QMessageBox.question(
@@ -787,16 +799,13 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             QtWidgets.QMessageBox.Yes,
         )
 
-        # 3. Create Safety Backup
         vdf_path = self._current_shortcuts_path
-        if os.path.exists(vdf_path):
-            shutil.copy2(vdf_path, vdf_path + ".bak")
 
-        # 4. Perform Deletion in VDF
+        # 3. Perform Deletion in VDF
         success, msg = delete_shortcut(vdf_path, self._current_appid)
 
         if success:
-            # 5. Optional Asset File Cleanup
+            # 4. Asset File Cleanup
             if clean_assets == QtWidgets.QMessageBox.Yes:
                 grid_dir = os.path.join(os.path.dirname(vdf_path), "grid")
                 # Look for all 5 patterns ({appid}p.jpg, {appid}.jpg, etc.)
@@ -809,9 +818,9 @@ class AssetDetailsScreen(QtWidgets.QWidget):
                             try:
                                 os.remove(target_file)
                             except Exception as e:
-                                print(f"DEBUG: Could not delete {target_file}: {e}")
+                                logger.warning(f"Could not delete {target_file}: {e}")
 
-            # 6. Finalize and Exit
+            # 5. Finalize and Exit
             self.name_changed.emit()  # Refresh the main list
             self.back_requested.emit()  # Go back to the list automatically
         else:
@@ -821,6 +830,9 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         """Opens a file dialog and copies a local image to the Steam grid folder."""
         if asset_type == "json":
             # Skip JSON
+            return
+
+        if not confirm_steam_closed(self):
             return
 
         # 1. Pick the file
@@ -853,7 +865,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
                     try:
                         os.remove(potential_old_file)
                     except Exception as e:
-                        print(f"DEBUG: Could not remove old asset: {e}")
+                        logger.warning(f"Could not remove old asset: {e}")
             # 3. Copy and Overwrite
             shutil.copy2(file_path, dest_path)
 

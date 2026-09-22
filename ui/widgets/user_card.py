@@ -3,10 +3,11 @@ UserCard — a selectable card showing one discovered shortcuts.vdf file.
 Displays: avatar, persona name (or fallback ID), shortcut count.
 """
 
-from PySide6 import QtWidgets, QtGui
+from PySide6 import QtGui, QtWidgets
 from PySide6.QtCore import Qt, Signal
-from ui.theme import PALETTE
+
 from core.steam import SteamUserShortcuts
+from ui.theme import PALETTE
 
 
 def _round_pixmap(pixmap: QtGui.QPixmap, size: int) -> QtGui.QPixmap:

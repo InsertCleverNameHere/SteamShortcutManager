@@ -1,13 +1,30 @@
-import sys
 import os
+import sys
+
+# Ensure modern protobuf works cleanly with steam.client
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+
+from core.log import setup_logging
+
+setup_logging()
+
+# Fast path: handle --version before loading GUI dependencies
+if "--version" in sys.argv:
+    from core.version import __version__
+
+    print(f"Steam Shortcut Manager v{__version__}")
+    sys.exit(0)
+
+
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
-from ui.theme import APP_STYLESHEET
-from ui.screens.setup_screen import SetupScreen
-from ui.screens.library_screen import LibraryScreen
-from ui.screens.shortcut_list_screen import ShortcutListScreen
-from ui.screens.asset_details_screen import AssetDetailsScreen
+
 from core.steam import detect_default_steam_dir, find_shortcuts
+from ui.screens.asset_details_screen import AssetDetailsScreen
+from ui.screens.library_screen import LibraryScreen
+from ui.screens.setup_screen import SetupScreen
+from ui.screens.shortcut_list_screen import ShortcutListScreen
+from ui.theme import APP_STYLESHEET
 
 
 def get_resource_path(relative_path):
@@ -92,6 +109,15 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
+    if "--smoke-test" in sys.argv:
+        from PySide6.QtCore import QTimer
+
+        app = QApplication(sys.argv)
+        window = MainWindow()
+        # Verify startup and exit immediately with code 0
+        QTimer.singleShot(100, app.quit)
+        sys.exit(app.exec())
+
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()

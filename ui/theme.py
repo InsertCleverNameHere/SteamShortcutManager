@@ -46,7 +46,7 @@ APP_STYLESHEET = f"""
 
     QScrollBar::handle:vertical {{
         background-color: {PALETTE['text_muted']};
-        border-radius: 3px; 
+        border-radius: 3px;
         min-height: 40px;
         margin: 2px 2px;
     }}
@@ -83,7 +83,7 @@ APP_STYLESHEET = f"""
         background-color: {PALETTE['accent_dim']};
     }}
 
-    
+
     QPushButton:disabled {{
         background-color: {PALETTE['bg_card']};
         color: {PALETTE['text_muted']};

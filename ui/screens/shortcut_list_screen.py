@@ -1,10 +1,16 @@
 import os
-import shutil
-from PySide6 import QtWidgets, QtCore
+from datetime import datetime
+
+from PySide6 import QtCore, QtWidgets
 from PySide6.QtGui import QAction, QActionGroup
+
 from core import vdf_parser
-from core.utils_win import resolve_windows_shortcut, get_game_name_from_metadata
+from core.lnk import resolve_lnk
+from core.pe_info import get_game_name_from_pe
+from core.platform import get_platform
+from core.shortcuts_io import get_available_backups, restore_backup
 from ui.theme import PALETTE
+from ui.widgets.steam_guard import confirm_steam_closed
 
 
 class AddShortcutWorker(QtCore.QObject):
@@ -19,11 +25,11 @@ class AddShortcutWorker(QtCore.QObject):
     def run(self):
         file_label = os.path.splitext(os.path.basename(self.raw_path))[0]
         if self.raw_path.lower().endswith(".lnk"):
-            exe_path = resolve_windows_shortcut(self.raw_path)
+            exe_path = resolve_lnk(self.raw_path)
             derived_name = file_label
         else:
             exe_path = self.raw_path
-            derived_name = get_game_name_from_metadata(exe_path)
+            derived_name = get_game_name_from_pe(exe_path)
         self.finished.emit(self.raw_path, exe_path, derived_name)
 
 
@@ -111,7 +117,36 @@ class ShortcutListScreen(QtWidgets.QWidget):
         header.addWidget(self.add_btn)
 
         layout.addLayout(header)
-        layout.addSpacing(20)
+        layout.addSpacing(10)
+
+        # Persistent Steam-Running Banner
+        self.running_banner = QtWidgets.QFrame()
+        self.running_banner.setStyleSheet(f"""
+            QFrame {{
+                background-color: rgba(232, 168, 56, 20);
+                border: 1px solid {PALETTE['warning']};
+                border-radius: 6px;
+            }}
+            QLabel {{
+                color: {PALETTE['warning']};
+                font-size: 12px;
+                font-weight: 600;
+                background: transparent;
+                border: none;
+            }}
+        """)
+        banner_layout = QtWidgets.QHBoxLayout(self.running_banner)
+        banner_layout.setContentsMargins(12, 6, 12, 6)
+        banner_lbl = QtWidgets.QLabel(
+            "⚠️ Steam is running — changes may be overwritten on exit. We recommend closing Steam."
+        )
+        banner_lbl.setWordWrap(True)
+        banner_lbl.setAlignment(QtCore.Qt.AlignCenter)
+        banner_layout.addWidget(banner_lbl)
+        self.running_banner.setVisible(False)
+        layout.addWidget(self.running_banner)
+
+        layout.addSpacing(10)
 
         # Scroll area for shortcuts
         self.scroll_area = QtWidgets.QScrollArea()
@@ -165,6 +200,11 @@ class ShortcutListScreen(QtWidgets.QWidget):
             group.addAction(action)
             menu.addAction(action)
 
+        menu.addSeparator()
+        restore_action = QAction("Restore from backup…", menu)
+        restore_action.triggered.connect(self._on_restore_backup_clicked)
+        menu.addAction(restore_action)
+
         # Anchor the menu directly under the button, left-aligned to it
         menu.exec(self.sort_btn.mapToGlobal(self.sort_btn.rect().bottomLeft()))
 
@@ -173,6 +213,68 @@ class ShortcutListScreen(QtWidgets.QWidget):
             return
         self._sort_mode = mode
         self.load_user_shortcuts(self._current_user_obj)
+
+    def _on_restore_backup_clicked(self):
+        if not getattr(self, "_current_user_obj", None):
+            return
+
+        shortcuts_path = self._current_user_obj.shortcuts_path
+        backups = get_available_backups(shortcuts_path)
+
+        if not backups:
+            QtWidgets.QMessageBox.information(
+                self,
+                "No Backups",
+                "No automatic backups were found in 'ssm-backups' for this profile.",
+            )
+            return
+
+        # Build readable labels with formatted timestamps
+        labels = []
+        for b in backups:
+            try:
+                mtime = datetime.fromtimestamp(b.stat().st_mtime)
+                date_str = mtime.strftime("%Y-%m-%d %H:%M:%S")
+            except OSError:
+                date_str = b.name
+            size_kb = max(1, round(b.stat().st_size / 1024))
+            labels.append(f"{date_str}  ({size_kb} KB)")
+
+        chosen_label, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            "Restore Backup",
+            "Select a backup to restore (replaces current shortcuts):",
+            labels,
+            0,
+            False,
+        )
+
+        if not ok or not chosen_label:
+            return
+
+        if not confirm_steam_closed(self):
+            return
+
+        chosen_idx = labels.index(chosen_label)
+        chosen_backup = backups[chosen_idx]
+
+        try:
+            success = restore_backup(chosen_backup, shortcuts_path)
+            if success:
+                QtWidgets.QMessageBox.information(
+                    self,
+                    "Backup Restored",
+                    "The shortcuts file was successfully restored from backup.",
+                )
+                self.load_user_shortcuts(self._current_user_obj)
+            else:
+                QtWidgets.QMessageBox.warning(
+                    self, "Restore Failed", "Could not restore the selected backup."
+                )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self, "Restore Error", f"Failed to restore backup: {e}"
+            )
 
     def _on_add_clicked(self):
         raw_path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -191,6 +293,9 @@ class ShortcutListScreen(QtWidgets.QWidget):
         Shared entry point for both the file-dialog Add flow and drag-and-drop.
         """
         if not self.add_btn.isEnabled():
+            return
+
+        if not confirm_steam_closed(self):
             return
 
         # Ensure refresh button is disabled during resolution
@@ -270,10 +375,6 @@ class ShortcutListScreen(QtWidgets.QWidget):
         if ok and game_name:
             vdf_path = self._current_user_obj.shortcuts_path
 
-            # Automated Backup
-            if os.path.exists(vdf_path):
-                shutil.copy2(vdf_path, vdf_path + ".bak")
-
             # Save to VDF
             success, msg, new_id = vdf_parser.add_new_shortcut(
                 vdf_path, game_name, exe_path, icon_path=exe_path
@@ -310,6 +411,10 @@ class ShortcutListScreen(QtWidgets.QWidget):
         # Fallback to userdata_id if persona_name is missing
         display_name = user_obj.persona_name or user_obj.userdata_id
         self.title_label.setText(f"{display_name}'s Library")
+
+        # Update persistent Steam-running banner
+        is_running = bool(get_platform().is_steam_running())
+        self.running_banner.setVisible(is_running)
 
         # Pre-scan the grid folder once to avoid O(N) disk hits in the loop
         grid_dir = os.path.join(os.path.dirname(user_obj.shortcuts_path), "grid")

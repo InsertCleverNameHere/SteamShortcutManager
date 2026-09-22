@@ -3,9 +3,13 @@ Steam installation discovery and shortcuts.vdf detection.
 """
 
 import os
+from dataclasses import dataclass
+
 import vdf
-from dataclasses import dataclass, field
-from typing import Optional
+
+from core.log import get_logger
+
+logger = get_logger("steam")
 
 DEFAULT_STEAM_PATHS = [
     r"C:\Program Files (x86)\Steam",
@@ -18,11 +22,11 @@ class SteamUserShortcuts:
     """Represents one discovered shortcuts.vdf file and its owning Steam user."""
 
     userdata_id: str  # The numeric folder name under userdata/
-    steam_id64: Optional[str]  # Full 64-bit Steam ID if resolvable
-    persona_name: Optional[str]
+    steam_id64: str | None  # Full 64-bit Steam ID if resolvable
+    persona_name: str | None
     shortcuts_path: str  # Full path to shortcuts.vdf
     shortcut_count: int
-    avatar_path: Optional[str] = None  # Path to locally cached avatar, if found
+    avatar_path: str | None = None  # Path to locally cached avatar, if found
 
 
 STEAM_ID64_BASE = 76561197960265728
@@ -42,7 +46,7 @@ def is_valid_steam_dir(path: str) -> bool:
     return has_exe or has_userdata
 
 
-def detect_default_steam_dir() -> Optional[str]:
+def detect_default_steam_dir() -> str | None:
     """Return the first default Steam path that actually exists, or None."""
     for path in DEFAULT_STEAM_PATHS:
         if is_valid_steam_dir(path):
@@ -50,7 +54,7 @@ def detect_default_steam_dir() -> Optional[str]:
     return None
 
 
-def get_persona_name(steam_dir: str, steamid64: str) -> Optional[str]:
+def get_persona_name(steam_dir: str, steamid64: str) -> str | None:
     """Look up a display name from loginusers.vdf using the full 64-bit Steam ID."""
     login_users_path = os.path.join(steam_dir, "config", "loginusers.vdf")
     if not os.path.isfile(login_users_path):
@@ -62,11 +66,11 @@ def get_persona_name(steam_dir: str, steamid64: str) -> Optional[str]:
         user = users.get(steamid64, {})
         return user.get("PersonaName") or user.get("AccountName") or None
     except Exception as e:
-        print(f"DEBUG: Persona lookup error: {e}")
+        logger.warning(f"Persona lookup error for {steamid64}: {e}")
         return None
 
 
-def get_avatar_path(steam_dir: str, steamid64: str) -> Optional[str]:
+def get_avatar_path(steam_dir: str, steamid64: str) -> str | None:
     """
     Try to find a locally cached avatar image for this user.
     Steam stores them as <steamid64>.jpg or <steamid64_small>.jpg inside
@@ -91,7 +95,7 @@ def count_shortcuts(shortcuts_path: str) -> int:
             data = vdf.binary_load(f)
         return len(data.get("shortcuts", {}))
     except Exception as e:
-        print(f"DEBUG: VDF Parse error in {shortcuts_path}: {e}")
+        logger.warning(f"VDF Parse error in {shortcuts_path}: {e}")
         return 0
 
 
@@ -143,10 +147,10 @@ def get_asset_status(shortcuts_vdf_path: str, appid: str) -> dict:
     # Define patterns to check. We check for .jpg then .png for images.
     # For JSON, it is strictly .json.
     patterns = {
-        "capsule": [f"{appid}p.jpg", f"{appid}p.png"],
-        "header": [f"{appid}.jpg", f"{appid}.png"],
-        "hero": [f"{appid}_hero.jpg", f"{appid}_hero.png"],
-        "logo": [f"{appid}_logo.png", f"{appid}_logo.jpg"],
+        "capsule": [f"{appid}p.jpg", f"{appid}p.png", f"{appid}p.jpeg"],
+        "header": [f"{appid}.jpg", f"{appid}.png", f"{appid}.jpeg"],
+        "hero": [f"{appid}_hero.jpg", f"{appid}_hero.png", f"{appid}_hero.jpeg"],
+        "logo": [f"{appid}_logo.png", f"{appid}_logo.jpg", f"{appid}_logo.jpeg"],
         "json": [f"{appid}.json"],
     }
 

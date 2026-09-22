@@ -5,6 +5,7 @@ The user browses to their Steam installation directory.
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
+
 from core.steam import is_valid_steam_dir
 from ui.theme import PALETTE
 

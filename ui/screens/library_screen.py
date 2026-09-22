@@ -5,9 +5,10 @@ Shown after the Steam directory is confirmed.
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
+
+from core.steam import SteamUserShortcuts
 from ui.theme import PALETTE
 from ui.widgets.user_card import UserCard
-from core.steam import SteamUserShortcuts
 
 
 class LibraryScreen(QtWidgets.QWidget):
