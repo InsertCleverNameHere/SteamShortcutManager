@@ -1,8 +1,10 @@
 from pathlib import Path
 
+import pytest
 import vdf
 
 from core import vdf_parser
+from core.shortcuts_io import ShortcutsFileError
 
 
 def test_vdf_parser_add_update_delete_lifecycle(tmp_path: Path):
@@ -47,3 +49,20 @@ def test_vdf_parser_add_update_delete_lifecycle(tmp_path: Path):
     with open(vdf_file, "rb") as f:
         data = vdf.binary_load(f)
     assert len(data["shortcuts"]) == 0
+
+
+def test_vdf_parser_re_exports():
+    """Ensure essential UI helper functions remain exported by vdf_parser."""
+    assert hasattr(vdf_parser, "get_shortcut_list")
+    assert hasattr(vdf_parser, "get_value_case_insensitive")
+    assert hasattr(vdf_parser, "normalize_appid")
+    assert hasattr(vdf_parser, "save_shortcuts")
+
+
+def test_vdf_parser_load_corrupted_raises(tmp_path: Path):
+    corrupt_file = tmp_path / "corrupt_shortcuts.vdf"
+    corrupt_file.write_bytes(b"\x00\xFF_NOT_A_VALID_VDF_BINARY_FILE")
+
+    with pytest.raises(ShortcutsFileError):
+        vdf_parser.load_shortcuts(corrupt_file)
+

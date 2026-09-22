@@ -6,9 +6,12 @@ Protects all mutations with ShortcutsTransaction and atomic writes.
 
 from pathlib import Path
 
+from core.appid import normalize_appid
 from core.shortcuts_io import (
     ShortcutsFileError,
     ShortcutsTransaction,
+    get_shortcut_list,
+    get_value_case_insensitive,
 )
 from core.shortcuts_io import (
     add_shortcut as _io_add_shortcut,
@@ -20,17 +23,27 @@ from core.shortcuts_io import (
     load_shortcuts as _io_load_shortcuts,
 )
 from core.shortcuts_io import (
+    save_shortcuts_atomic as save_shortcuts,
+)
+from core.shortcuts_io import (
     update_shortcut_name as _io_update_shortcut_name,
 )
 
+__all__ = [
+    "ShortcutsFileError",
+    "load_shortcuts",
+    "save_shortcuts",
+    "get_shortcut_list",
+    "get_value_case_insensitive",
+    "normalize_appid",
+    "add_new_shortcut",
+    "update_shortcut_name",
+    "delete_shortcut",
+]
 
 def load_shortcuts(path: str | Path) -> dict:
-    """Loads shortcuts.vdf safely without crashing the UI on empty or missing files."""
-    try:
-        return _io_load_shortcuts(path, strict=True)
-    except ShortcutsFileError:
-        # Graceful fallback for UI compatibility
-        return {"shortcuts": {}}
+    """Loads shortcuts.vdf strictly, raising ShortcutsFileError on corrupted files."""
+    return _io_load_shortcuts(path, strict=True)
 
 
 def add_new_shortcut(

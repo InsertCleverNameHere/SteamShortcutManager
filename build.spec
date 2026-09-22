@@ -31,11 +31,6 @@ a = Analysis(
         # zope
         "zope.event",
         "zope.interface",
-        # pywin32
-        "win32api",
-        "win32com.client",
-        "win32com.shell",
-        "pywintypes",
         *steam_hiddenimports,
         *gevent_hiddenimports,
     ],

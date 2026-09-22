@@ -6,11 +6,14 @@ from PySide6.QtGui import QAction, QActionGroup
 
 from core import vdf_parser
 from core.lnk import resolve_lnk
+from core.log import get_logger
 from core.pe_info import get_game_name_from_pe
 from core.platform import get_platform
-from core.shortcuts_io import get_available_backups, restore_backup
+from core.shortcuts_io import ShortcutsFileError, get_available_backups, restore_backup
 from ui.theme import PALETTE
 from ui.widgets.steam_guard import confirm_steam_closed
+
+logger = get_logger("shortcut_list_screen")
 
 
 class AddShortcutWorker(QtCore.QObject):
@@ -432,6 +435,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
 
         # Load the data
         try:
+            self.add_btn.setEnabled(True)
             data = vdf_parser.load_shortcuts(user_obj.shortcuts_path)
             shortcuts = vdf_parser.get_shortcut_list(data)
 
@@ -549,6 +553,50 @@ class ShortcutListScreen(QtWidgets.QWidget):
                 self._card_data.append((card, name.lower()))
 
                 self.list_layout.addWidget(card)
+
+        except ShortcutsFileError as err:
+            logger.error(f"Corruption detected in shortcuts file: {err}")
+            self.add_btn.setEnabled(False)
+
+            err_container = QtWidgets.QWidget()
+            err_layout = QtWidgets.QVBoxLayout(err_container)
+            err_layout.setAlignment(QtCore.Qt.AlignCenter)
+            err_layout.setContentsMargins(0, 60, 0, 0)
+            err_layout.setSpacing(12)
+
+            icon_lbl = QtWidgets.QLabel("⚠️")
+            icon_lbl.setStyleSheet("font-size: 48px; background: transparent;")
+            icon_lbl.setAlignment(QtCore.Qt.AlignCenter)
+
+            title_lbl = QtWidgets.QLabel("Shortcuts File Corrupted")
+            title_lbl.setObjectName("heading")
+            title_lbl.setAlignment(QtCore.Qt.AlignCenter)
+            title_lbl.setStyleSheet(
+                f"color: {PALETTE['danger']}; background: transparent;"
+            )
+
+            desc_lbl = QtWidgets.QLabel(
+                "The shortcuts.vdf file is corrupted or improperly formatted.\n"
+                "To prevent data loss, adding shortcuts is disabled until a backup is restored."
+            )
+            desc_lbl.setObjectName("subheading")
+            desc_lbl.setAlignment(QtCore.Qt.AlignCenter)
+            desc_lbl.setStyleSheet(
+                f"color: {PALETTE['text_muted']}; background: transparent;"
+            )
+
+            restore_btn = QtWidgets.QPushButton("Restore from Backup…")
+            restore_btn.setFixedWidth(200)
+            restore_btn.setFixedHeight(38)
+            restore_btn.clicked.connect(self._on_restore_backup_clicked)
+
+            err_layout.addWidget(icon_lbl)
+            err_layout.addWidget(title_lbl)
+            err_layout.addWidget(desc_lbl)
+            err_layout.addSpacing(8)
+            err_layout.addWidget(restore_btn, alignment=QtCore.Qt.AlignCenter)
+
+            self.list_layout.addWidget(err_container)
 
         except Exception as e:
             error_lbl = QtWidgets.QLabel(f"Error loading shortcuts: {e}")

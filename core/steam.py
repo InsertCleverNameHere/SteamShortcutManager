@@ -4,17 +4,15 @@ Steam installation discovery and shortcuts.vdf detection.
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import vdf
 
 from core.log import get_logger
+from core.platform import get_platform
+from core.platform.base import SteamInstall
 
 logger = get_logger("steam")
-
-DEFAULT_STEAM_PATHS = [
-    r"C:\Program Files (x86)\Steam",
-    r"C:\Program Files\Steam",
-]
 
 
 @dataclass
@@ -27,6 +25,7 @@ class SteamUserShortcuts:
     shortcuts_path: str  # Full path to shortcuts.vdf
     shortcut_count: int
     avatar_path: str | None = None  # Path to locally cached avatar, if found
+    install: SteamInstall | None = None  # Associated Steam installation
 
 
 STEAM_ID64_BASE = 76561197960265728
@@ -36,21 +35,18 @@ def userdata_id_to_steamid64(userdata_id: str) -> str:
     return str(STEAM_ID64_BASE + int(userdata_id))
 
 
-def is_valid_steam_dir(path: str) -> bool:
-    """Check that the given path looks like a real Steam installation."""
-    if not path or not os.path.isdir(path):
+def is_valid_steam_dir(path: str | Path) -> bool:
+    """Check that the given path looks like a real Steam installation using the platform layer."""
+    if not path:
         return False
-    # steam.exe or a userdata folder are both good signals
-    has_exe = os.path.isfile(os.path.join(path, "steam.exe"))
-    has_userdata = os.path.isdir(os.path.join(path, "userdata"))
-    return has_exe or has_userdata
+    return get_platform().is_valid_steam_dir(path)
 
 
 def detect_default_steam_dir() -> str | None:
-    """Return the first default Steam path that actually exists, or None."""
-    for path in DEFAULT_STEAM_PATHS:
-        if is_valid_steam_dir(path):
-            return path
+    """Return the first discovered Steam installation path from the platform layer, or None."""
+    installs = get_platform().discover_steam_installs()
+    if installs:
+        return str(installs[0].path)
     return None
 
 
@@ -99,38 +95,48 @@ def count_shortcuts(shortcuts_path: str) -> int:
         return 0
 
 
-def find_shortcuts(steam_dir: str) -> list[SteamUserShortcuts]:
+def find_shortcuts(steam_dir: str | Path | SteamInstall) -> list[SteamUserShortcuts]:
     """
     Scan <steam_dir>/userdata/ for every shortcuts.vdf that exists.
-    Returns a list of SteamUserShortcuts, one per discovered file.
+    Returns a list of SteamUserShortcuts, tagged with its SteamInstall.
     """
-    results: list[SteamUserShortcuts] = []
-    userdata_root = os.path.join(steam_dir, "userdata")
+    if isinstance(steam_dir, SteamInstall):
+        install_obj = steam_dir
+        root_path = Path(steam_dir.path)
+    else:
+        root_path = Path(steam_dir).resolve()
+        known_installs = get_platform().discover_steam_installs()
+        matched = next((i for i in known_installs if i.path.resolve() == root_path), None)
+        install_obj = matched or SteamInstall(path=root_path, kind="custom", label="Steam (Custom)")
 
-    if not os.path.isdir(userdata_root):
+    results: list[SteamUserShortcuts] = []
+    userdata_root = root_path / "userdata"
+
+    if not userdata_root.is_dir():
         return results
 
     for entry in os.listdir(userdata_root):
         if not entry.isdigit() or entry == "0":
             continue
 
-        shortcuts_path = os.path.join(userdata_root, entry, "config", "shortcuts.vdf")
-        if not os.path.isfile(shortcuts_path):
+        shortcuts_path = userdata_root / entry / "config" / "shortcuts.vdf"
+        if not shortcuts_path.is_file():
             continue
 
         steamid64 = userdata_id_to_steamid64(entry)
-        persona = get_persona_name(steam_dir, steamid64)
-        avatar = get_avatar_path(steam_dir, steamid64)
-        count = count_shortcuts(shortcuts_path)
+        persona = get_persona_name(str(root_path), steamid64)
+        avatar = get_avatar_path(str(root_path), steamid64)
+        count = count_shortcuts(str(shortcuts_path))
 
         results.append(
             SteamUserShortcuts(
                 userdata_id=entry,
                 steam_id64=steamid64,
                 persona_name=persona,
-                shortcuts_path=shortcuts_path,
+                shortcuts_path=str(shortcuts_path),
                 shortcut_count=count,
                 avatar_path=avatar,
+                install=install_obj,
             )
         )
 

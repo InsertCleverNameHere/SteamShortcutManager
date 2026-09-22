@@ -10,6 +10,14 @@ from PySide6 import QtCore, QtWidgets
 
 from core.platform import get_platform
 
+_warned_unknown_session = False
+
+
+def reset_session_warning() -> None:
+    """Resets the once-per-session warning flag (used by unit tests)."""
+    global _warned_unknown_session
+    _warned_unknown_session = False
+
 
 def confirm_steam_closed(parent: QtWidgets.QWidget | None = None) -> bool:
     """
@@ -20,11 +28,22 @@ def confirm_steam_closed(parent: QtWidgets.QWidget | None = None) -> bool:
 
     Returns True if safe/confirmed to proceed, False if aborted.
     """
+    global _warned_unknown_session
     platform = get_platform()
     is_running = platform.is_steam_running()
 
-    # If Steam is not running or running status cannot be determined, proceed
-    if not is_running:
+    if is_running is False:
+        return True
+
+    if is_running is None:
+        if not _warned_unknown_session:
+            _warned_unknown_session = True
+            QtWidgets.QMessageBox.information(
+                parent,
+                "Steam Status Unknown",
+                "Could not determine if Steam is running (e.g. running in a sandbox).\n\n"
+                "Please ensure Steam is closed before making changes to avoid having edits overwritten.",
+            )
         return True
 
     msg_box = QtWidgets.QMessageBox(parent)
