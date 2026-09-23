@@ -15,6 +15,7 @@ from typing import Any
 import vdf
 
 from core.appid import generate_shortcut_appid, normalize_appid, to_int32
+from core.platform import get_platform
 
 
 class ShortcutsError(Exception):
@@ -262,8 +263,7 @@ def add_shortcut(
     quoted_exe = f'"{clean_exe}"'
 
     if not start_dir:
-        parent_dir = os.path.dirname(clean_exe)
-        start_dir = f"{parent_dir}/" if os.name != "nt" else f"{parent_dir}\\"
+        start_dir = get_platform().format_start_dir(clean_exe)
 
     unsigned_appid = generate_shortcut_appid(clean_exe, game_name)
     signed_appid = to_int32(unsigned_appid)

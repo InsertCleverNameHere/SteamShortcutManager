@@ -399,11 +399,12 @@ class ShortcutListScreen(QtWidgets.QWidget):
 
     @staticmethod
     def _asset_complete(appid: str, grid_files: set) -> bool:
+        img_exts = (".jpg", ".png", ".jpeg")
         return (
-            any(f"{appid}p{e}" in grid_files for e in (".jpg", ".png"))
-            and any(f"{appid}{e}" in grid_files for e in (".jpg", ".png"))
-            and any(f"{appid}_hero{e}" in grid_files for e in (".jpg", ".png"))
-            and any(f"{appid}_logo{e}" in grid_files for e in (".png", ".jpg"))
+            any(f"{appid}p{e}" in grid_files for e in img_exts)
+            and any(f"{appid}{e}" in grid_files for e in img_exts)
+            and any(f"{appid}_hero{e}" in grid_files for e in img_exts)
+            and any(f"{appid}_logo{e}" in grid_files for e in img_exts)
             and f"{appid}.json" in grid_files
         )
 

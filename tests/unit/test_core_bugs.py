@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from core.steam import get_asset_status
+from ui.screens.shortcut_list_screen import ShortcutListScreen
 
 
 def test_asset_status_detects_jpeg(tmp_path: Path):
@@ -27,3 +28,17 @@ def test_asset_status_detects_jpeg(tmp_path: Path):
     assert status["header"][0] is True
     assert status["header"][1] == str(header)
     assert status["hero"][0] is False  # Missing
+
+
+def test_shortcut_list_asset_complete_recognizes_jpeg():
+    """Verify that _asset_complete recognizes .jpeg files for all artwork slots."""
+    appid = "3836504666"
+    grid_files = {
+        f"{appid}p.jpeg",
+        f"{appid}.jpeg",
+        f"{appid}_hero.jpeg",
+        f"{appid}_logo.jpeg",
+        f"{appid}.json",
+    }
+    assert ShortcutListScreen._asset_complete(appid, grid_files) is True
+
