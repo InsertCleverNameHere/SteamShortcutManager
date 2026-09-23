@@ -6,8 +6,9 @@ The user browses to their Steam installation directory.
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
 
+from core.platform import get_platform
 from core.steam import is_valid_steam_dir
-from ui.theme import PALETTE
+from ui.theme import PALETTE, get_icon
 
 
 class SetupScreen(QtWidgets.QWidget):
@@ -37,11 +38,10 @@ class SetupScreen(QtWidgets.QWidget):
         col.setSpacing(0)
         col.setAlignment(Qt.AlignCenter)
 
-        icon_label = QtWidgets.QLabel("🛠️")
+        icon_label = QtWidgets.QLabel()
         icon_label.setAlignment(Qt.AlignCenter)
-        icon_label.setStyleSheet(
-            f"font-size: 48px; color: {PALETTE['accent']}; margin-bottom: 24px;"
-        )
+        icon_label.setPixmap(get_icon("tools").pixmap(48, 48))
+        icon_label.setStyleSheet("margin-bottom: 24px; background: transparent;")
         col.addWidget(icon_label)
 
         heading = QtWidgets.QLabel("Locate Steam")
@@ -62,12 +62,12 @@ class SetupScreen(QtWidgets.QWidget):
 
         col.addSpacing(36)
 
-        # ── path row ────────────────────────────────────────────────────────
+        ## ── path row ────────────────────────────────────────────────────────
         path_row = QtWidgets.QHBoxLayout()
         path_row.setSpacing(8)
 
         self._path_edit = QtWidgets.QLineEdit()
-        self._path_edit.setPlaceholderText(r"C:\Program Files (x86)\Steam")
+        self._path_edit.setPlaceholderText(get_platform().steam_dir_placeholder())
         self._path_edit.textChanged.connect(self._on_path_changed)
         path_row.addWidget(self._path_edit, 1)
 
@@ -80,6 +80,15 @@ class SetupScreen(QtWidgets.QWidget):
         col.addLayout(path_row)
 
         col.addSpacing(8)
+
+        if get_platform().name == "linux":
+            hint_lbl = QtWidgets.QLabel(
+                "Tip: Try pressing Ctrl+H in the file dialog to show hidden folders (e.g. .local)"
+            )
+            hint_lbl.setObjectName("muted")
+            hint_lbl.setAlignment(Qt.AlignCenter)
+            col.addWidget(hint_lbl)
+            col.addSpacing(8)
 
         self._error_label = QtWidgets.QLabel("")
         self._error_label.setStyleSheet(f"color: {PALETTE['danger']}; font-size: 12px;")

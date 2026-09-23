@@ -171,3 +171,11 @@ def get_asset_status(shortcuts_vdf_path: str, appid: str) -> dict:
         status[key] = (found_path is not None, found_path)
 
     return status
+
+def find_all_shortcuts() -> list[SteamUserShortcuts]:
+    """Discovers shortcuts across all detected Steam installations on the system."""
+    installs = get_platform().discover_steam_installs()
+    all_users: list[SteamUserShortcuts] = []
+    for install in installs:
+        all_users.extend(find_shortcuts(install))
+    return all_users

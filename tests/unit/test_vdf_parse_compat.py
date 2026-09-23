@@ -66,3 +66,21 @@ def test_vdf_parser_load_corrupted_raises(tmp_path: Path):
     with pytest.raises(ShortcutsFileError):
         vdf_parser.load_shortcuts(corrupt_file)
 
+def test_update_shortcut_icon_integration(tmp_path: Path):
+    """Verify vdf_parser.update_shortcut_icon sets icon in shortcuts.vdf atomically."""
+    vdf_file = tmp_path / "shortcuts.vdf"
+    vdf_file.write_bytes(b"\x00shortcuts\x00\x08\x08")
+
+    # Add game
+    _, _, appid = vdf_parser.add_new_shortcut(str(vdf_file), "Hades", "/games/hades.exe")
+    assert appid is not None
+
+    # Update icon
+    icon_path = str(tmp_path / "grid" / f"{appid}_icon.ico")
+    ok, msg = vdf_parser.update_shortcut_icon(str(vdf_file), appid, icon_path)
+    assert ok is True
+
+    # Reload directly with vdf to verify storage
+    with open(vdf_file, "rb") as f:
+        data = vdf.binary_load(f)
+    assert data["shortcuts"]["0"]["icon"] == icon_path

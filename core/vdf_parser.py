@@ -26,6 +26,9 @@ from core.shortcuts_io import (
     save_shortcuts_atomic as save_shortcuts,
 )
 from core.shortcuts_io import (
+    update_shortcut_icon as _io_update_shortcut_icon,
+)
+from core.shortcuts_io import (
     update_shortcut_name as _io_update_shortcut_name,
 )
 
@@ -38,6 +41,7 @@ __all__ = [
     "normalize_appid",
     "add_new_shortcut",
     "update_shortcut_name",
+    "update_shortcut_icon",
     "delete_shortcut",
 ]
 
@@ -76,6 +80,20 @@ def update_shortcut_name(
             if not found:
                 return False, "Shortcut not found in file."
         return True, "Name updated."
+    except Exception as e:
+        return False, str(e)
+
+
+def update_shortcut_icon(
+    vdf_path: str, appid: str | int, icon_path: str
+) -> tuple[bool, str]:
+    """Safely updates shortcut icon wrapped in ShortcutsTransaction, preserving key casing."""
+    try:
+        with ShortcutsTransaction(vdf_path) as tx:
+            found = _io_update_shortcut_icon(tx.data, appid, icon_path)
+            if not found:
+                return False, "Shortcut not found in file."
+        return True, "Icon updated."
     except Exception as e:
         return False, str(e)
 

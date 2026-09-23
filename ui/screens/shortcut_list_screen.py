@@ -10,7 +10,7 @@ from core.log import get_logger
 from core.pe_info import get_game_name_from_pe
 from core.platform import get_platform
 from core.shortcuts_io import ShortcutsFileError, get_available_backups, restore_backup
-from ui.theme import PALETTE
+from ui.theme import PALETTE, get_icon
 from ui.widgets.steam_guard import confirm_steam_closed
 
 logger = get_logger("shortcut_list_screen")
@@ -284,7 +284,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
             self,
             "Select Game",
             "",
-            "Games (*.exe *.lnk);;All Files (*.*)",
+            get_platform().file_dialog_filter,
         )
         if not raw_path:
             return
@@ -318,16 +318,8 @@ class ShortcutListScreen(QtWidgets.QWidget):
 
         self._add_thread.start()
 
-    _DROPPABLE_EXTENSIONS = (".exe", ".lnk")
-
     def _extract_droppable_path(self, mime_data) -> str | None:
-        """
-        Returns the local file path if the drop contains exactly one valid
-        .exe/.lnk file. Returns None for empty drops, multi-file drops, or
-        drops containing anything else — multi-file is rejected outright
-        rather than silently picking one, so the user gets clear "no-drop"
-        feedback instead of an ambiguous partial success.
-        """
+        """Returns the local file path if the drop contains exactly one valid game executable."""
         if not mime_data.hasUrls():
             return None
 
@@ -340,31 +332,65 @@ class ShortcutListScreen(QtWidgets.QWidget):
             return None
 
         path = url.toLocalFile()
-        if path.lower().endswith(self._DROPPABLE_EXTENSIONS) and os.path.isfile(path):
+        allowed = get_platform().droppable_extensions
+        if path.lower().endswith(allowed) and os.path.isfile(path):
             return path
         return None
 
     def dragEnterEvent(self, event):
-        if self._extract_droppable_path(event.mimeData()):
+        # Accept drops that contain local files so dropEvent can process or explain errors
+        if event.mimeData().hasUrls():
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
-        # Required alongside dragEnterEvent on some platforms/Qt versions
-        # for the drop to actually register during mouse movement.
-        if self._extract_droppable_path(event.mimeData()):
+        if event.mimeData().hasUrls():
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event):
-        path = self._extract_droppable_path(event.mimeData())
-        if not path:
+        if not event.mimeData().hasUrls():
             event.ignore()
             return
-        event.acceptProposedAction()
-        self._start_add_from_path(path)
+
+        urls = event.mimeData().urls()
+        if len(urls) != 1 or not urls[0].isLocalFile():
+            event.ignore()
+            QtWidgets.QMessageBox.information(
+                self,
+                "Multiple Items Dropped",
+                "Please drag and drop a single game executable at a time.",
+            )
+            return
+
+        path = urls[0].toLocalFile()
+        valid_path = self._extract_droppable_path(event.mimeData())
+
+        if valid_path:
+            event.acceptProposedAction()
+            self._start_add_from_path(valid_path)
+            return
+
+        # Friendly rejection messages per Plan §2.1
+        event.ignore()
+        ext = os.path.splitext(path)[1].lower() or "folder"
+        if ext in (".bat", ".msi"):
+            msg = (
+                f"'{ext}' files are scripts or installers and cannot be launched directly as games.\n\n"
+                "Please drag and drop the main game executable (.exe) instead."
+            )
+        elif not os.path.isfile(path):
+            msg = "Directories cannot be added as shortcuts. Please drop the main game executable (.exe)."
+        else:
+            allowed_str = ", ".join(get_platform().droppable_extensions)
+            msg = (
+                f"Unsupported file type ({ext}).\n\n"
+                f"Only game executables ({allowed_str}) can be added on this platform."
+            )
+
+        QtWidgets.QMessageBox.information(self, "Unsupported Drop", msg)
 
     def _on_shortcut_resolved(self, raw_path, exe_path, derived_name):
         """Continues the Add Shortcut flow after background resolution."""
@@ -378,9 +404,9 @@ class ShortcutListScreen(QtWidgets.QWidget):
         if ok and game_name:
             vdf_path = self._current_user_obj.shortcuts_path
 
-            # Save to VDF
+            # Save to VDF (icon left empty by default per Plan §2.4)
             success, msg, new_id = vdf_parser.add_new_shortcut(
-                vdf_path, game_name, exe_path, icon_path=exe_path
+                vdf_path, game_name, exe_path
             )
 
             if success:
@@ -469,8 +495,9 @@ class ShortcutListScreen(QtWidgets.QWidget):
                 empty_layout.setContentsMargins(0, 80, 0, 0)
                 empty_layout.setSpacing(10)
 
-                icon_lbl = QtWidgets.QLabel("📂")
-                icon_lbl.setStyleSheet("font-size: 48px; background: transparent;")
+                icon_lbl = QtWidgets.QLabel()
+                icon_lbl.setPixmap(get_icon("folder").pixmap(48, 48))
+                icon_lbl.setStyleSheet("background: transparent;")
                 icon_lbl.setAlignment(QtCore.Qt.AlignCenter)
 
                 msg_lbl = QtWidgets.QLabel("No shortcuts found")

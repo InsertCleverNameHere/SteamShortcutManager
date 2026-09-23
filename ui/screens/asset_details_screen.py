@@ -11,8 +11,8 @@ from PySide6.QtGui import QPixmap
 from core.asset_provider import download_assets, search_steam_apps
 from core.log import get_logger
 from core.steam import get_asset_status
-from core.vdf_parser import delete_shortcut, update_shortcut_name
-from ui.theme import PALETTE
+from core.vdf_parser import delete_shortcut, update_shortcut_icon, update_shortcut_name
+from ui.theme import PALETTE, get_icon
 from ui.widgets.steam_guard import confirm_steam_closed
 
 logger = get_logger("asset_details_screen")
@@ -155,18 +155,22 @@ class AssetSlot(QtWidgets.QWidget):
                     f"color: {PALETTE['success']}; font-size: 14px; font-weight: bold; background: transparent;"
                 )
             else:
-                pix = QPixmap(path)
-                if not pix.isNull():
-                    self.content_label.setPixmap(
-                        pix.scaled(
-                            320,
-                            160,
-                            QtCore.Qt.KeepAspectRatio,
-                            QtCore.Qt.SmoothTransformation,
-                        )
-                    )
-                self.content_label.setText("")
-                self.content_label.setStyleSheet("background: transparent;")
+                        pix = QPixmap(path)
+                        if not pix.isNull():
+                            # High-DPI / Wayland fractional scaling: scale at physical pixel resolution
+                            dpr = self.devicePixelRatio()
+                            target_w = int(320 * dpr)
+                            target_h = int(160 * dpr)
+                            scaled_pix = pix.scaled(
+                                target_w,
+                                target_h,
+                                QtCore.Qt.KeepAspectRatio,
+                                QtCore.Qt.SmoothTransformation,
+                            )
+                            scaled_pix.setDevicePixelRatio(dpr)
+                            self.content_label.setPixmap(scaled_pix)
+                        self.content_label.setText("")
+                        self.content_label.setStyleSheet("background: transparent;")
         else:
             self.content_label.setPixmap(QPixmap())
             self.content_label.setText("× Missing")
@@ -280,7 +284,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         # Smart Suggestion Badge
         self.suggestion_widget = QtWidgets.QFrame()
         self.suggestion_widget.setFixedHeight(35)
-        self.suggestion_widget.setFixedWidth(140)
+        self.suggestion_widget.setFixedWidth(165)
         self.suggestion_widget.setStyleSheet(f"""
             QFrame {{
                 background: {PALETTE['bg_card']};
@@ -338,14 +342,16 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         toolbox_row.addWidget(self.inject_btn)
 
         # Delete button
-        self.delete_btn = QtWidgets.QPushButton("🗑️")
+        self.delete_btn = QtWidgets.QPushButton()
+        self.delete_btn.setIcon(get_icon("trash"))
+        self.delete_btn.setIconSize(QtCore.QSize(22, 22))
+        self.delete_btn.setToolTip("Delete shortcut")
         self.delete_btn.setFixedSize(40, 40)
         self.delete_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self.delete_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
                 border: none;
-                font-size: 20px;
                 padding: 0px;
             }
             QPushButton:hover {
@@ -376,26 +382,31 @@ class AssetDetailsScreen(QtWidgets.QWidget):
 
         # Edit Input
         self.title_edit = QtWidgets.QLineEdit()
-        self.title_edit.setFixedWidth(400)
+        self.title_edit.setFixedWidth(600)
+        self.title_edit.setMinimumHeight(70)
+        self.title_edit.setAlignment(QtCore.Qt.AlignCenter)
         self.title_edit.setVisible(False)
         self.title_edit.setStyleSheet(f"""
-            font-size: 22px;
-            font-weight: 700;
+            font-size: 22px; 
+            font-weight: 700; 
             color: {PALETTE['text_primary']};
             background: {PALETTE['bg_surface']};
             border: 1px solid {PALETTE['accent']};
+            border-radius: 6px;
         """)
         title_row.addWidget(self.title_edit)
 
         # The Edit/Save Button
-        self.edit_btn = QtWidgets.QPushButton("🖊️")
+        self.edit_btn = QtWidgets.QPushButton()
+        self.edit_btn.setIcon(get_icon("edit"))
+        self.edit_btn.setIconSize(QtCore.QSize(22, 22))
+        self.edit_btn.setToolTip("Rename game")
         self.edit_btn.setFixedSize(40, 40)
         self.edit_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self.edit_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
                 border: none;
-                font-size: 20px;
                 padding: 0px;
             }
             QPushButton:hover {
@@ -608,6 +619,20 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self._set_busy(False)
         self.status_label.setText("")
         if success:
+            # If an official icon was downloaded, set it in shortcuts.vdf
+            grid_dir = os.path.join(
+                os.path.dirname(self._current_shortcuts_path), "grid"
+            )
+            icon_candidate = os.path.join(
+                grid_dir, f"{self._current_appid}_icon.ico"
+            )
+            if os.path.isfile(icon_candidate):
+                update_shortcut_icon(
+                    self._current_shortcuts_path,
+                    self._current_appid,
+                    icon_candidate,
+                )
+
             # Refresh the view to show new assets
             self.load_assets(
                 self._current_name, self._current_shortcuts_path, self._current_appid
@@ -693,7 +718,8 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             self.title_edit.setText(self._current_name)
             self.title_label.setVisible(False)
             self.title_edit.setVisible(True)
-            self.edit_btn.setText("✅")
+            self.edit_btn.setIcon(get_icon("check"))
+            self.edit_btn.setToolTip("Save new name")
             self.title_edit.setFocus()
 
         # Case: Finalizing Changes (Transitioning from Edit to View)
@@ -713,7 +739,8 @@ class AssetDetailsScreen(QtWidgets.QWidget):
 
             self.title_edit.setVisible(False)
             self.title_label.setVisible(True)
-            self.edit_btn.setText("🖊️")
+            self.edit_btn.setIcon(get_icon("edit"))
+            self.edit_btn.setToolTip("Rename game")
 
     def _trigger_search(self, game_name):
         """Triggers a background Steam search for the given name."""
@@ -808,9 +835,9 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             # 4. Asset File Cleanup
             if clean_assets == QtWidgets.QMessageBox.Yes:
                 grid_dir = os.path.join(os.path.dirname(vdf_path), "grid")
-                # Look for all 5 patterns ({appid}p.jpg, {appid}.jpg, etc.)
-                for suffix in ["p", "", "_hero", "_logo"]:
-                    for ext in [".jpg", ".png", ".json"]:  # covers image and json
+                # Clean all artwork and icon patterns ({appid}p.jpg, {appid}_icon.ico, etc.)
+                for suffix in ["p", "", "_hero", "_logo", "_icon"]:
+                    for ext in [".jpg", ".png", ".json", ".ico"]:
                         target_file = os.path.join(
                             grid_dir, f"{self._current_appid}{suffix}{ext}"
                         )

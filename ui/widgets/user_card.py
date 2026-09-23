@@ -138,7 +138,11 @@ class UserCard(QtWidgets.QFrame):
         )
         text_col.addWidget(name_label)
 
-        id_label = QtWidgets.QLabel(f"ID: {self._user.userdata_id}")
+        info_text = f"ID: {self._user.userdata_id}"
+        if self._user.install:
+            info_text += f"  •  {self._user.install.label}"
+
+        id_label = QtWidgets.QLabel(info_text)
         id_label.setStyleSheet(
             f"font-size: 11px; color: {PALETTE['text_muted']}; background: transparent;"
         )

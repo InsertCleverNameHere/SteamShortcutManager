@@ -17,16 +17,13 @@ class LinuxPlatform(PlatformServices):
     droppable_extensions = (".exe",)
     file_dialog_filter = "Windows Executables (*.exe);;All Files (*.*)"
 
-    # Candidate directories to discover on Linux (expanduser + resolve symlinks)
+    # Candidate directories to discover on Linux (expand vars + expanduser + dedupe)
     CANDIDATES: list[tuple[str, InstallKind, str]] = [
         ("~/.local/share/Steam", "native", "Steam (Native)"),
+        ("$XDG_DATA_HOME/Steam", "native", "Steam (Native)"),
         ("~/.steam/steam", "native", "Steam (Native)"),
         ("~/.steam/debian-installation", "native", "Steam (Debian)"),
-        (
-            "~/.var/app/com.valvesoftware.Steam/.local/share/Steam",
-            "flatpak",
-            "Steam (Flatpak)",
-        ),
+        ("~/.var/app/com.valvesoftware.Steam/.local/share/Steam", "flatpak", "Steam (Flatpak)"),
     ]
 
     def discover_steam_installs(self) -> list[SteamInstall]:
@@ -34,7 +31,12 @@ class LinuxPlatform(PlatformServices):
         seen_paths: set[Path] = set()
 
         for raw_path, kind, label in self.CANDIDATES:
-            expanded = Path(os.path.expanduser(raw_path))
+            # Expand environment variables ($XDG_DATA_HOME) and tildes (~)
+            expanded_str = os.path.expanduser(os.path.expandvars(raw_path))
+            if "$" in expanded_str:  # Unset environment variable, skip
+                continue
+
+            expanded = Path(expanded_str)
             if not expanded.exists():
                 continue
 
@@ -65,12 +67,66 @@ class LinuxPlatform(PlatformServices):
         # On Linux, userdata/ is the universal indicator
         return (p / "userdata").is_dir()
 
+    def _read_registry_vdf_active(self, install: SteamInstall | None = None) -> bool | None:
+        """
+        Inspects registry.vdf under ActiveProcess to check if Steam is flagged running.
+        Returns True if running, False if stopped (pid is 0), or None if file cannot be read.
+        """
+        # Determine registry.vdf location (Native vs Flatpak)
+        candidates = [
+            Path.home() / ".steam" / "registry.vdf",
+            Path.home() / ".local" / "share" / "Steam" / "registry.vdf",
+            Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / ".steam" / "registry.vdf",
+        ]
+        if install and install.path:
+            candidates.insert(0, install.path / "registry.vdf")
+
+        for reg_path in candidates:
+            if not reg_path.is_file():
+                continue
+            try:
+                # Text VDF parse of registry.vdf
+                import vdf
+                with open(reg_path, encoding="utf-8", errors="replace") as f:
+                    data = vdf.load(f)
+
+                # Search case-insensitively for Registry -> HKCU -> Software -> Valve -> Steam -> ActiveProcess
+                reg_root = data.get("Registry", data.get("registry", {}))
+                hkcu = reg_root.get("HKCU", reg_root.get("hkcu", {}))
+                software = hkcu.get("Software", hkcu.get("software", {}))
+                valve = software.get("Valve", software.get("valve", {}))
+                steam = valve.get("Steam", valve.get("steam", {}))
+                active_proc = steam.get("ActiveProcess", steam.get("activeprocess", {}))
+
+                pid_val = str(active_proc.get("pid", active_proc.get("PID", "0"))).strip()
+                active_user = str(active_proc.get("ActiveUser", "0")).strip()
+
+                if pid_val.isdigit() and int(pid_val) > 0 and active_user != "0":
+                    return True
+                if pid_val == "0":
+                    return False
+            except Exception:
+                continue
+
+        return None
+
     def is_steam_running(self, install: SteamInstall | None = None) -> bool | None:
         """
-        Fast two-factor check:
-        1. Check ~/.steam/steam.pid
-        2. Fall back to scanning active processes for 'steam'
+        Three-tier detection:
+        1. Preferred: psutil scan for process named 'steam'
+        2. PID check: ~/.steam/steam.pid
+        3. Sandbox fallback: ~/.steam/registry.vdf ActiveProcess
         """
+        # 1. Preferred psutil process scan
+        try:
+            for proc in psutil.process_iter(attrs=["name"]):
+                name = proc.info.get("name")
+                if name and name.lower() == "steam":
+                    return True
+        except Exception:
+            pass
+
+        # 2. Check ~/.steam/steam.pid
         pid_file = Path.home() / ".steam" / "steam.pid"
         if pid_file.is_file():
             try:
@@ -85,23 +141,36 @@ class LinuxPlatform(PlatformServices):
             except OSError:
                 pass
 
-        # Fallback via psutil
-        try:
-            for proc in psutil.process_iter(attrs=["name"]):
-                name = proc.info.get("name")
-                if name and name.lower() == "steam":
-                    return True
-            return False
-        except Exception:
+        # 3. Sandbox fallback via registry.vdf
+        reg_active = self._read_registry_vdf_active(install)
+        if reg_active is not None:
+            return reg_active
+
+        # If inside a sandbox and no process or registry info could be verified, return None (unknown)
+        if self.is_sandboxed():
             return None
 
-    def request_steam_shutdown(self, install: SteamInstall | None = None) -> bool:
-        """Attempts graceful shutdown via 'steam -shutdown'."""
-        try:
-            cmd = ["steam", "-shutdown"]
-            if install and install.kind == "flatpak":
-                cmd = ["flatpak", "run", "com.valvesoftware.Steam", "-shutdown"]
+        return False
 
+    def request_steam_shutdown(self, install: SteamInstall | None = None) -> bool:
+        """
+        Attempts graceful Steam shutdown:
+        - Native: 'steam -shutdown' (only allowed when not sandboxed)
+        - Flatpak: 'flatpak run com.valvesoftware.Steam -shutdown'
+        """
+        is_flatpak = install is not None and install.kind == "flatpak"
+
+        # Host commands to native Steam are blocked from inside a sandbox
+        if self.is_sandboxed() and not is_flatpak:
+            return False
+
+        cmd = (
+            ["flatpak", "run", "com.valvesoftware.Steam", "-shutdown"]
+            if is_flatpak
+            else ["steam", "-shutdown"]
+        )
+
+        try:
             subprocess.run(
                 cmd,
                 check=False,

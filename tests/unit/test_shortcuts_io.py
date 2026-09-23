@@ -15,6 +15,7 @@ from core.shortcuts_io import (
     load_shortcuts,
     restore_backup,
     save_shortcuts_atomic,
+    update_shortcut_icon,
     update_shortcut_name,
 )
 
@@ -165,3 +166,18 @@ def test_add_shortcut_delegates_start_dir_to_platform():
     mock_platform.format_start_dir.assert_called_once_with("/custom/path/game.exe")
     assert entry["StartDir"] == "/mocked/start/dir/"
 
+
+def test_update_shortcut_icon_preserves_case():
+    """Verify update_shortcut_icon updates the icon field and preserves key casing."""
+    data = {
+        "shortcuts": {
+            "0": {
+                "appid": -200,
+                "AppName": "Test Game",
+                "icon": "",
+            }
+        }
+    }
+    updated = update_shortcut_icon(data, -200, "/path/to/icon.ico")
+    assert updated is True
+    assert data["shortcuts"]["0"]["icon"] == "/path/to/icon.ico"

@@ -11,8 +11,11 @@ from core.log import get_logger
 
 logger = get_logger("asset_provider")
 
-# The base URL for Steam's official assets
+# Base URLs for Steam's official assets
 CDN_BASE = "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps"
+COMMUNITY_ICON_BASE = (
+    "https://shared.fastly.steamstatic.com/community_assets/images/apps"
+)
 
 # Timeouts
 _ASSET_REQUEST_TIMEOUT = (
@@ -235,6 +238,41 @@ def download_assets(
 
             if not download_success:
                 report(f"⚠️ Skipping {display_name}: download failed after 2 attempts")
+
+        if is_aborted():
+            return False, "❌ Cancelled."
+
+        # Handle official client icon (.ico) from Fastly Community CDN
+        client_icon_hash = common.get("clienticon") or common.get("icon")
+        if client_icon_hash and not is_aborted():
+            icon_url = f"{COMMUNITY_ICON_BASE}/{steam_appid}/{client_icon_hash}.ico"
+            local_icon_path = os.path.join(grid_dir, f"{local_appid}_icon.ico")
+
+            if force or not os.path.exists(local_icon_path):
+                report("📥 [3/4] Downloading icon...")
+                download_success = False
+                for attempt in range(2):
+                    if is_aborted():
+                        return False, "❌ Cancelled"
+                    try:
+                        res = requests.get(icon_url, timeout=_ASSET_REQUEST_TIMEOUT)
+                        if res.status_code == 200:
+                            with open(local_icon_path, "wb") as f:
+                                f.write(res.content)
+                            downloaded_count += 1
+                            download_success = True
+                            break
+                    except requests.exceptions.Timeout:
+                        suffix_msg = "retrying..." if attempt == 0 else "skipping"
+                        report(f"⚠️ icon timed out — {suffix_msg}")
+                    except requests.exceptions.RequestException:
+                        pass
+
+                    if attempt == 0 and not is_aborted():
+                        time.sleep(1)
+
+                if not download_success:
+                    report("⚠️ Skipping icon: download failed after 2 attempts")
 
         if is_aborted():
             return False, "❌ Cancelled."
