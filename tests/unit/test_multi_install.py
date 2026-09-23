@@ -10,8 +10,12 @@ from ui.widgets.user_card import UserCard
 
 
 def test_find_all_shortcuts_aggregates_multiple_installs():
-    install1 = SteamInstall(path=Path("/steam/native"), kind="native", label="Steam (Native)")
-    install2 = SteamInstall(path=Path("/steam/flatpak"), kind="flatpak", label="Steam (Flatpak)")
+    install1 = SteamInstall(
+        path=Path("/steam/native"), kind="native", label="Steam (Native)"
+    )
+    install2 = SteamInstall(
+        path=Path("/steam/flatpak"), kind="flatpak", label="Steam (Flatpak)"
+    )
 
     mock_platform = MagicMock()
     mock_platform.discover_steam_installs.return_value = [install1, install2]

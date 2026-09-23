@@ -23,7 +23,11 @@ class LinuxPlatform(PlatformServices):
         ("$XDG_DATA_HOME/Steam", "native", "Steam (Native)"),
         ("~/.steam/steam", "native", "Steam (Native)"),
         ("~/.steam/debian-installation", "native", "Steam (Debian)"),
-        ("~/.var/app/com.valvesoftware.Steam/.local/share/Steam", "flatpak", "Steam (Flatpak)"),
+        (
+            "~/.var/app/com.valvesoftware.Steam/.local/share/Steam",
+            "flatpak",
+            "Steam (Flatpak)",
+        ),
     ]
 
     def discover_steam_installs(self) -> list[SteamInstall]:
@@ -67,7 +71,9 @@ class LinuxPlatform(PlatformServices):
         # On Linux, userdata/ is the universal indicator
         return (p / "userdata").is_dir()
 
-    def _read_registry_vdf_active(self, install: SteamInstall | None = None) -> bool | None:
+    def _read_registry_vdf_active(
+        self, install: SteamInstall | None = None
+    ) -> bool | None:
         """
         Inspects registry.vdf under ActiveProcess to check if Steam is flagged running.
         Returns True if running, False if stopped (pid is 0), or None if file cannot be read.
@@ -76,7 +82,12 @@ class LinuxPlatform(PlatformServices):
         candidates = [
             Path.home() / ".steam" / "registry.vdf",
             Path.home() / ".local" / "share" / "Steam" / "registry.vdf",
-            Path.home() / ".var" / "app" / "com.valvesoftware.Steam" / ".steam" / "registry.vdf",
+            Path.home()
+            / ".var"
+            / "app"
+            / "com.valvesoftware.Steam"
+            / ".steam"
+            / "registry.vdf",
         ]
         if install and install.path:
             candidates.insert(0, install.path / "registry.vdf")
@@ -87,6 +98,7 @@ class LinuxPlatform(PlatformServices):
             try:
                 # Text VDF parse of registry.vdf
                 import vdf
+
                 with open(reg_path, encoding="utf-8", errors="replace") as f:
                     data = vdf.load(f)
 
@@ -98,7 +110,9 @@ class LinuxPlatform(PlatformServices):
                 steam = valve.get("Steam", valve.get("steam", {}))
                 active_proc = steam.get("ActiveProcess", steam.get("activeprocess", {}))
 
-                pid_val = str(active_proc.get("pid", active_proc.get("PID", "0"))).strip()
+                pid_val = str(
+                    active_proc.get("pid", active_proc.get("PID", "0"))
+                ).strip()
                 active_user = str(active_proc.get("ActiveUser", "0")).strip()
 
                 if pid_val.isdigit() and int(pid_val) > 0 and active_user != "0":

@@ -303,6 +303,7 @@ def update_shortcut_name(data: dict, appid: str | int, new_name: str) -> bool:
             return True
     return False
 
+
 def update_shortcut_icon(data: dict, appid: str | int, icon_path: str) -> bool:
     """Finds shortcut by appid and updates its icon path while preserving key casing."""
     target_id = normalize_appid(appid)

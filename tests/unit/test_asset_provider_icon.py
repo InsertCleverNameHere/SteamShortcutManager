@@ -39,4 +39,6 @@ def test_download_assets_fetches_client_icon(tmp_path: Path):
                 assert success is True
                 icon_path = os.path.join(grid_dir, "12345_icon.ico")
                 assert os.path.isfile(icon_path)
-                assert open(icon_path, "rb").read() == b"\x00\x00\x01\x00FAKE_ICO_CONTENT"
+                assert (
+                    open(icon_path, "rb").read() == b"\x00\x00\x01\x00FAKE_ICO_CONTENT"
+                )

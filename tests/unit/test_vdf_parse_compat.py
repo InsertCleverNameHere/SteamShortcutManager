@@ -61,10 +61,11 @@ def test_vdf_parser_re_exports():
 
 def test_vdf_parser_load_corrupted_raises(tmp_path: Path):
     corrupt_file = tmp_path / "corrupt_shortcuts.vdf"
-    corrupt_file.write_bytes(b"\x00\xFF_NOT_A_VALID_VDF_BINARY_FILE")
+    corrupt_file.write_bytes(b"\x00\xff_NOT_A_VALID_VDF_BINARY_FILE")
 
     with pytest.raises(ShortcutsFileError):
         vdf_parser.load_shortcuts(corrupt_file)
+
 
 def test_update_shortcut_icon_integration(tmp_path: Path):
     """Verify vdf_parser.update_shortcut_icon sets icon in shortcuts.vdf atomically."""
@@ -72,7 +73,9 @@ def test_update_shortcut_icon_integration(tmp_path: Path):
     vdf_file.write_bytes(b"\x00shortcuts\x00\x08\x08")
 
     # Add game
-    _, _, appid = vdf_parser.add_new_shortcut(str(vdf_file), "Hades", "/games/hades.exe")
+    _, _, appid = vdf_parser.add_new_shortcut(
+        str(vdf_file), "Hades", "/games/hades.exe"
+    )
     assert appid is not None
 
     # Update icon

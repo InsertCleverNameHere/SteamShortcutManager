@@ -11,11 +11,15 @@ def test_file_dialog_filter_uses_platform(qtbot):
     mock_platform = MagicMock()
     mock_platform.file_dialog_filter = "Custom Filter (*.exe)"
 
-    with patch("ui.screens.shortcut_list_screen.get_platform", return_value=mock_platform):
+    with patch(
+        "ui.screens.shortcut_list_screen.get_platform", return_value=mock_platform
+    ):
         screen = ShortcutListScreen()
         qtbot.addWidget(screen)
 
-        with patch("PySide6.QtWidgets.QFileDialog.getOpenFileName", return_value=("", "")) as mock_dialog:
+        with patch(
+            "PySide6.QtWidgets.QFileDialog.getOpenFileName", return_value=("", "")
+        ) as mock_dialog:
             screen._on_add_clicked()
             mock_dialog.assert_called_once_with(
                 screen, "Select Game", "", "Custom Filter (*.exe)"
@@ -30,7 +34,9 @@ def test_extract_droppable_path_linux_rejects_lnk(qtbot, tmp_path: Path):
     mock_platform = MagicMock()
     mock_platform.droppable_extensions = (".exe",)
 
-    with patch("ui.screens.shortcut_list_screen.get_platform", return_value=mock_platform):
+    with patch(
+        "ui.screens.shortcut_list_screen.get_platform", return_value=mock_platform
+    ):
         screen = ShortcutListScreen()
         qtbot.addWidget(screen)
 
@@ -47,7 +53,9 @@ def test_extract_droppable_path_accepts_valid_exe(qtbot, tmp_path: Path):
     mock_platform = MagicMock()
     mock_platform.droppable_extensions = (".exe",)
 
-    with patch("ui.screens.shortcut_list_screen.get_platform", return_value=mock_platform):
+    with patch(
+        "ui.screens.shortcut_list_screen.get_platform", return_value=mock_platform
+    ):
         screen = ShortcutListScreen()
         qtbot.addWidget(screen)
 

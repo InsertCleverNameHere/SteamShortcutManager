@@ -12,9 +12,7 @@ os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 import requests
 from steam.client import SteamClient
 
-STORE_ASSET_BASE = (
-    "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps"
-)
+STORE_ASSET_BASE = "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps"
 SHARED_COMMUNITY_BASE = (
     "https://shared.fastly.steamstatic.com/community_assets/images/apps"
 )

@@ -155,22 +155,22 @@ class AssetSlot(QtWidgets.QWidget):
                     f"color: {PALETTE['success']}; font-size: 14px; font-weight: bold; background: transparent;"
                 )
             else:
-                        pix = QPixmap(path)
-                        if not pix.isNull():
-                            # High-DPI / Wayland fractional scaling: scale at physical pixel resolution
-                            dpr = self.devicePixelRatio()
-                            target_w = int(320 * dpr)
-                            target_h = int(160 * dpr)
-                            scaled_pix = pix.scaled(
-                                target_w,
-                                target_h,
-                                QtCore.Qt.KeepAspectRatio,
-                                QtCore.Qt.SmoothTransformation,
-                            )
-                            scaled_pix.setDevicePixelRatio(dpr)
-                            self.content_label.setPixmap(scaled_pix)
-                        self.content_label.setText("")
-                        self.content_label.setStyleSheet("background: transparent;")
+                pix = QPixmap(path)
+                if not pix.isNull():
+                    # High-DPI / Wayland fractional scaling: scale at physical pixel resolution
+                    dpr = self.devicePixelRatio()
+                    target_w = int(320 * dpr)
+                    target_h = int(160 * dpr)
+                    scaled_pix = pix.scaled(
+                        target_w,
+                        target_h,
+                        QtCore.Qt.KeepAspectRatio,
+                        QtCore.Qt.SmoothTransformation,
+                    )
+                    scaled_pix.setDevicePixelRatio(dpr)
+                    self.content_label.setPixmap(scaled_pix)
+                self.content_label.setText("")
+                self.content_label.setStyleSheet("background: transparent;")
         else:
             self.content_label.setPixmap(QPixmap())
             self.content_label.setText("× Missing")
@@ -387,8 +387,8 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self.title_edit.setAlignment(QtCore.Qt.AlignCenter)
         self.title_edit.setVisible(False)
         self.title_edit.setStyleSheet(f"""
-            font-size: 22px; 
-            font-weight: 700; 
+            font-size: 22px;
+            font-weight: 700;
             color: {PALETTE['text_primary']};
             background: {PALETTE['bg_surface']};
             border: 1px solid {PALETTE['accent']};
@@ -623,9 +623,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             grid_dir = os.path.join(
                 os.path.dirname(self._current_shortcuts_path), "grid"
             )
-            icon_candidate = os.path.join(
-                grid_dir, f"{self._current_appid}_icon.ico"
-            )
+            icon_candidate = os.path.join(grid_dir, f"{self._current_appid}_icon.ico")
             if os.path.isfile(icon_candidate):
                 update_shortcut_icon(
                     self._current_shortcuts_path,

@@ -41,4 +41,3 @@ def test_shortcut_list_asset_complete_recognizes_jpeg():
         f"{appid}.json",
     }
     assert ShortcutListScreen._asset_complete(appid, grid_files) is True
-

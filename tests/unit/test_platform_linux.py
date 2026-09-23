@@ -36,6 +36,7 @@ def test_linux_path_warnings_installer():
     warnings = platform.path_warnings("/home/user/Downloads/setup_game.exe")
     assert any("installer" in w.lower() for w in warnings)
 
+
 def test_linux_discover_steam_installs_expands_xdg_data_home(tmp_path: Path):
     """Verify that $XDG_DATA_HOME is expanded and discovered."""
     custom_xdg = tmp_path / "custom_xdg"
@@ -65,6 +66,7 @@ def test_linux_discover_steam_installs_deduplicates_symlinks(tmp_path: Path):
     installs = platform.discover_steam_installs()
     assert len(installs) == 1
     assert installs[0].path == real_steam.resolve()
+
 
 def test_linux_is_steam_running_registry_fallback_active(tmp_path: Path):
     """Verify registry.vdf fallback reports True when ActiveProcess has non-zero pid."""
@@ -103,10 +105,13 @@ def test_linux_is_steam_running_registry_fallback_active(tmp_path: Path):
 
                 assert platform.is_steam_running() is True
 
+
 def test_linux_request_steam_shutdown_flatpak():
     """Verify Flatpak Steam command is used when install.kind is flatpak."""
     platform = LinuxPlatform()
-    flatpak_install = SteamInstall(path=Path("/steam"), kind="flatpak", label="Steam Flatpak")
+    flatpak_install = SteamInstall(
+        path=Path("/steam"), kind="flatpak", label="Steam Flatpak"
+    )
 
     with patch("subprocess.run") as mock_run:
         res = platform.request_steam_shutdown(flatpak_install)
@@ -119,13 +124,16 @@ def test_linux_request_steam_shutdown_flatpak():
 def test_linux_request_steam_shutdown_native_blocked_in_sandbox():
     """Verify native Steam shutdown is blocked if app itself is running in sandbox."""
     platform = LinuxPlatform()
-    native_install = SteamInstall(path=Path("/steam"), kind="native", label="Steam Native")
+    native_install = SteamInstall(
+        path=Path("/steam"), kind="native", label="Steam Native"
+    )
 
     with patch.object(platform, "is_sandboxed", return_value=True):
         with patch("subprocess.run") as mock_run:
             res = platform.request_steam_shutdown(native_install)
             assert res is False
             mock_run.assert_not_called()
+
 
 def test_linux_is_steam_running_registry_inactive(tmp_path: Path):
     """Verify registry.vdf with pid '0' reports False."""
@@ -167,5 +175,7 @@ def test_linux_is_steam_running_sandboxed_inconclusive_returns_none(tmp_path: Pa
     with patch.object(platform, "is_sandboxed", return_value=True):
         with patch("psutil.process_iter", return_value=[]):
             with patch("core.platform.linux.Path.home", return_value=tmp_path):
-                with patch.object(platform, "_read_registry_vdf_active", return_value=None):
+                with patch.object(
+                    platform, "_read_registry_vdf_active", return_value=None
+                ):
                     assert platform.is_steam_running() is None

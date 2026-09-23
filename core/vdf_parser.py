@@ -45,6 +45,7 @@ __all__ = [
     "delete_shortcut",
 ]
 
+
 def load_shortcuts(path: str | Path) -> dict:
     """Loads shortcuts.vdf strictly, raising ShortcutsFileError on corrupted files."""
     return _io_load_shortcuts(path, strict=True)

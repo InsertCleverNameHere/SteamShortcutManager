@@ -9,4 +9,6 @@ def test_load_bundled_fonts_registers_inter(qtbot):
     assert success is True
 
     families = QFontDatabase.families()
-    assert any("Inter" in f for f in families), "Inter font family not found in QFontDatabase."
+    assert any(
+        "Inter" in f for f in families
+    ), "Inter font family not found in QFontDatabase."

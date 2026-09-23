@@ -106,8 +106,12 @@ def find_shortcuts(steam_dir: str | Path | SteamInstall) -> list[SteamUserShortc
     else:
         root_path = Path(steam_dir).resolve()
         known_installs = get_platform().discover_steam_installs()
-        matched = next((i for i in known_installs if i.path.resolve() == root_path), None)
-        install_obj = matched or SteamInstall(path=root_path, kind="custom", label="Steam (Custom)")
+        matched = next(
+            (i for i in known_installs if i.path.resolve() == root_path), None
+        )
+        install_obj = matched or SteamInstall(
+            path=root_path, kind="custom", label="Steam (Custom)"
+        )
 
     results: list[SteamUserShortcuts] = []
     userdata_root = root_path / "userdata"
@@ -171,6 +175,7 @@ def get_asset_status(shortcuts_vdf_path: str, appid: str) -> dict:
         status[key] = (found_path is not None, found_path)
 
     return status
+
 
 def find_all_shortcuts() -> list[SteamUserShortcuts]:
     """Discovers shortcuts across all detected Steam installations on the system."""

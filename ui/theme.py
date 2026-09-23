@@ -20,7 +20,6 @@ def get_icon(name: str) -> QIcon:
     return QIcon()
 
 
-
 PALETTE = {
     "bg_deep": "#0f1114",
     "bg_surface": "#1a1d23",
@@ -172,6 +171,7 @@ APP_STYLESHEET = f"""
     }}
 """
 
+
 def get_app_icon() -> QIcon:
     """Returns the application icon, preferring PNG on Linux and ICO on Windows."""
     assets_dir = Path(__file__).resolve().parent.parent / "assets"
@@ -185,6 +185,7 @@ def get_app_icon() -> QIcon:
     if png_path.is_file():
         return QIcon(str(png_path))
     return QIcon()
+
 
 _FONTS_DIR = Path(__file__).parent / "resources" / "fonts"
 

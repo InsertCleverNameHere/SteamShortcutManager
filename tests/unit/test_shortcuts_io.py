@@ -154,6 +154,7 @@ def test_backup_listing_and_restore(tmp_path: Path):
     assert restored is True
     assert vdf_file.read_bytes() == b"\x00shortcuts\x00\x08\x08"
 
+
 def test_add_shortcut_delegates_start_dir_to_platform():
     """Verify that add_shortcut uses PlatformServices.format_start_dir when start_dir is empty."""
     mock_platform = MagicMock()
