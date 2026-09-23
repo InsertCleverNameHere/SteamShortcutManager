@@ -386,7 +386,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
         if not url.isLocalFile():
             return None
 
-        path = url.toLocalFile()
+        path = os.path.normpath(url.toLocalFile())
         allowed = get_platform().droppable_extensions
         if path.lower().endswith(allowed) and os.path.isfile(path):
             return path
@@ -420,7 +420,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
             )
             return
 
-        path = urls[0].toLocalFile()
+        path = os.path.normpath(urls[0].toLocalFile())
         valid_path = self._extract_droppable_path(event.mimeData())
 
         if valid_path:

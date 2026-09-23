@@ -61,4 +61,6 @@ def test_extract_droppable_path_accepts_valid_exe(qtbot, tmp_path: Path):
 
         mime = QMimeData()
         mime.setUrls([QUrl.fromLocalFile(str(fake_exe))])
-        assert screen._extract_droppable_path(mime) == str(fake_exe)
+        result = screen._extract_droppable_path(mime)
+        assert result is not None
+        assert Path(result) == fake_exe
