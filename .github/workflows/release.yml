@@ -72,7 +72,7 @@ jobs:
         run: ./packaging/linux/build_appimage.sh
 
       - name: Run AppImage Smoke Test
-        run: xvfb-run ./dist/SteamShortcutManager-x86_64.AppImage --smoke-test
+        run: QT_QPA_PLATFORM=offscreen xvfb-run ./dist/SteamShortcutManager-x86_64.AppImage --smoke-test
 
       - name: Upload Linux AppImage artifact
         uses: actions/upload-artifact@v7

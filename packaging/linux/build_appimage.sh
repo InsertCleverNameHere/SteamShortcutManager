@@ -35,6 +35,14 @@ cp assets/icon.png "${APPDIR}/steamshortcutmanager.png"
 cp assets/icon.png "${APPDIR}/.DirIcon"
 cp assets/icon-256.png "${APPDIR}/usr/share/icons/hicolor/256x256/apps/steamshortcutmanager.png"
 
+# Bundle libxcb-cursor.so.0 into AppDir/usr/lib for Qt 6.5+ compatibility
+mkdir -p "${APPDIR}/usr/lib"
+for lib_candidate in /usr/lib/x86_64-linux-gnu/libxcb-cursor.so.0* /usr/lib64/libxcb-cursor.so.0* /usr/lib/libxcb-cursor.so.0*; do
+    if [ -e "${lib_candidate}" ]; then
+        cp -P "${lib_candidate}" "${APPDIR}/usr/lib/"
+    fi
+done
+
 # 3. Locate or fetch appimagetool
 APPIMAGETOOL=""
 if command -v appimagetool >/dev/null 2>&1; then
