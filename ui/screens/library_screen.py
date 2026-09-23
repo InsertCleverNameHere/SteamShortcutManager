@@ -5,9 +5,10 @@ Shown after the Steam directory is confirmed.
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
+
+from core.steam import SteamUserShortcuts
 from ui.theme import PALETTE
 from ui.widgets.user_card import UserCard
-from core.steam import SteamUserShortcuts
 
 
 class LibraryScreen(QtWidgets.QWidget):
@@ -116,11 +117,12 @@ class LibraryScreen(QtWidgets.QWidget):
     # ── public API ────────────────────────────────────────────────────────────
 
     def populate(self, users: list[SteamUserShortcuts]):
-        """Replace the card list with a fresh set of user results."""
-        # clear existing cards
-        for card in self._cards:
-            self._card_layout.removeWidget(card)
-            card.deleteLater()
+        """Replace the card list with a fresh set of user results, grouped if multiple installs exist."""
+        # clear existing cards and headers
+        while self._card_layout.count() > 1:  # keep the trailing stretch
+            item = self._card_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
         self._cards.clear()
         self._selected_user = None
         self._open_btn.setEnabled(False)
@@ -130,17 +132,36 @@ class LibraryScreen(QtWidgets.QWidget):
         self._sub_label.setText(
             f"Found {count} Steam user {profile_word} with a shortcuts file."
             if count > 0
-            else "No shortcuts.vdf files found in this Steam installation."
+            else "No shortcuts.vdf files found."
         )
 
-        # insert cards before the trailing stretch
-        stretch_index = self._card_layout.count() - 1
+        # Check if multiple distinct installations exist
+        distinct_installs = {u.install.label for u in users if u.install}
+        has_multiple_installs = len(distinct_installs) > 1
+
+        # Group users by install label
+        groups: dict[str, list[SteamUserShortcuts]] = {}
         for user in users:
-            card = UserCard(user)
-            card.selected.connect(self._on_card_selected)
-            self._cards.append(card)
-            self._card_layout.insertWidget(stretch_index, card)
-            stretch_index += 1
+            label = user.install.label if user.install else "Steam"
+            groups.setdefault(label, []).append(user)
+
+        stretch_index = self._card_layout.count() - 1
+        for label, group_users in groups.items():
+            if has_multiple_installs:
+                header_lbl = QtWidgets.QLabel(label.upper())
+                header_lbl.setStyleSheet(
+                    f"font-size: 11px; font-weight: 800; letter-spacing: 1px; "
+                    f"color: {PALETTE['accent']}; margin-top: 10px; margin-bottom: 4px;"
+                )
+                self._card_layout.insertWidget(stretch_index, header_lbl)
+                stretch_index += 1
+
+            for user in group_users:
+                card = UserCard(user)
+                card.selected.connect(self._on_card_selected)
+                self._cards.append(card)
+                self._card_layout.insertWidget(stretch_index, card)
+                stretch_index += 1
 
     # ── slots ─────────────────────────────────────────────────────────────────
 

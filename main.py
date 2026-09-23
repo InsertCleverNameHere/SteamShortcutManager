@@ -1,13 +1,33 @@
-import sys
 import os
-from PySide6.QtGui import QIcon
+import sys
+
+# Ensure modern protobuf works cleanly with steam.client
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+
+# Silence noisy host portal lookup warning when running uninstalled
+os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.services=false")
+
+from core.log import setup_logging
+
+setup_logging()
+
+# Fast path: handle --version before loading GUI dependencies
+if "--version" in sys.argv:
+    from core.version import __version__
+
+    print(f"Steam Shortcut Manager v{__version__}")
+    sys.exit(0)
+
+
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
-from ui.theme import APP_STYLESHEET
-from ui.screens.setup_screen import SetupScreen
-from ui.screens.library_screen import LibraryScreen
-from ui.screens.shortcut_list_screen import ShortcutListScreen
+
+from core.steam import detect_default_steam_dir, find_all_shortcuts, find_shortcuts
 from ui.screens.asset_details_screen import AssetDetailsScreen
-from core.steam import detect_default_steam_dir, find_shortcuts
+from ui.screens.library_screen import LibraryScreen
+from ui.screens.setup_screen import SetupScreen
+from ui.screens.shortcut_list_screen import ShortcutListScreen
+from ui.theme import APP_STYLESHEET, get_app_icon, load_bundled_fonts
 
 
 def get_resource_path(relative_path):
@@ -25,9 +45,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Steam Shortcut Manager")
         self.resize(800, 700)
-        icon_path = get_resource_path(os.path.join("assets", "icon.ico"))
-        if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
+        app_icon = get_app_icon()
+        if not app_icon.isNull():
+            self.setWindowIcon(app_icon)
         self.setStyleSheet(APP_STYLESHEET)
 
         self.stack = QStackedWidget()
@@ -65,12 +85,17 @@ class MainWindow(QMainWindow):
             )
         )
 
-        # Auto-detect
-        steam_path = detect_default_steam_dir()
-        if steam_path:
-            self.on_steam_dir_found(steam_path)
+        # Auto-detect across all discovered installs
+        all_users = find_all_shortcuts()
+        if all_users:
+            self.library_screen.populate(all_users)
+            self.stack.setCurrentWidget(self.library_screen)
         else:
-            self.stack.setCurrentWidget(self.setup_screen)
+            steam_path = detect_default_steam_dir()
+            if steam_path:
+                self.on_steam_dir_found(steam_path)
+            else:
+                self.stack.setCurrentWidget(self.setup_screen)
 
     def on_steam_dir_found(self, path):
         users = find_shortcuts(path)
@@ -92,7 +117,24 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
+    if "--smoke-test" in sys.argv:
+        from PySide6.QtCore import QTimer
+
+        app = QApplication(sys.argv)
+        load_bundled_fonts()
+        QGuiApplication.setDesktopFileName("steamshortcutmanager")
+        window = MainWindow()
+        # Verify startup and exit immediately with code 0
+        QTimer.singleShot(100, app.quit)
+        sys.exit(app.exec())
+
     app = QApplication(sys.argv)
+    load_bundled_fonts()
+    QGuiApplication.setDesktopFileName("steamshortcutmanager")
+    app_icon = get_app_icon()
+    if not app_icon.isNull():
+        app.setWindowIcon(app_icon)
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

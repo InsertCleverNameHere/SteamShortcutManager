@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+
+# Resolve the directory where the AppImage is mounted
+HERE="$(dirname "$(readlink -f "${0}")")"
+
+export PATH="${HERE}/usr/bin:${HERE}:${PATH}"
+export LD_LIBRARY_PATH="${HERE}/usr/lib:${HERE}:${LD_LIBRARY_PATH}"
+export PYTHONHOME="${HERE}"
+export PYTHONPATH="${HERE}"
+
+# Ensure modern protobuf works cleanly
+export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
+
+# Silence noisy desktop portal lookup warnings
+export QT_LOGGING_RULES="qt.qpa.services=false;${QT_LOGGING_RULES}"
+
+# Launch the compiled binary, passing all command-line arguments
+exec "${HERE}/steamshortcutmanager" "$@"

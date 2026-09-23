@@ -1,15 +1,21 @@
 import os
 import shutil
 import threading
+from enum import Enum, auto
+from urllib.parse import urlparse
+
 import requests
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtGui import QPixmap
-from core.vdf_parser import update_shortcut_name, delete_shortcut
-from ui.theme import PALETTE
-from core.steam import get_asset_status
+
 from core.asset_provider import download_assets, search_steam_apps
-from enum import Enum, auto
-from urllib.parse import urlparse
+from core.log import get_logger
+from core.steam import get_asset_status
+from core.vdf_parser import delete_shortcut, update_shortcut_icon, update_shortcut_name
+from ui.theme import PALETTE, get_icon
+from ui.widgets.steam_guard import confirm_steam_closed
+
+logger = get_logger("asset_details_screen")
 
 
 class SearchState(Enum):
@@ -42,7 +48,7 @@ class SearchWorker(QtCore.QObject):
                 parsed = urlparse(url)
                 trusted_domains = (".steampowered.com", ".steamstatic.com")
                 if not parsed.netloc.endswith(trusted_domains):
-                    print(f"DEBUG: Blocked untrusted thumbnail URL: {url}")
+                    logger.warning(f"Blocked untrusted thumbnail URL: {url}")
                     result["thumb_bytes"] = None
                 else:
                     headers = {
@@ -55,7 +61,7 @@ class SearchWorker(QtCore.QObject):
                     else:
                         result["thumb_bytes"] = None
             except Exception as e:
-                print(f"DEBUG: Thumbnail download error: {e}")
+                logger.warning(f"Thumbnail download error: {e}")
                 # Use .get() or check type before setting to be safe
                 if isinstance(result, dict):
                     result["thumb_bytes"] = None
@@ -133,6 +139,13 @@ class AssetSlot(QtWidgets.QWidget):
         self.content_label = QtWidgets.QLabel()
         self.content_label.setMinimumHeight(160)
         self.content_label.setAlignment(QtCore.Qt.AlignTop)
+
+        # Opacity effect for smooth artwork fade-in
+        self._content_opacity = QtWidgets.QGraphicsOpacityEffect(self.content_label)
+        self._content_opacity.setOpacity(1.0)
+        self.content_label.setGraphicsEffect(self._content_opacity)
+        self._current_path: str | None = None
+
         layout.addWidget(self.content_label)
 
     def mousePressEvent(self, event):
@@ -140,28 +153,52 @@ class AssetSlot(QtWidgets.QWidget):
             self.manual_upload_requested.emit(self.key)
 
     def update_slot(self, exists, path):
-        """Updates the content without recreating the widget."""
+        """Updates the content without recreating the widget, smoothly fading in new images."""
         if exists:
             if self.key == "json":
+                self._current_path = None
+                self._content_opacity.setOpacity(1.0)
                 self.content_label.setPixmap(QPixmap())
                 self.content_label.setText("✓ Position Data Found")
                 self.content_label.setStyleSheet(
                     f"color: {PALETTE['success']}; font-size: 14px; font-weight: bold; background: transparent;"
                 )
             else:
+                is_new_image = self._current_path != path
+                self._current_path = path
+
                 pix = QPixmap(path)
                 if not pix.isNull():
-                    self.content_label.setPixmap(
-                        pix.scaled(
-                            320,
-                            160,
-                            QtCore.Qt.KeepAspectRatio,
-                            QtCore.Qt.SmoothTransformation,
-                        )
+                    # High-DPI / Wayland fractional scaling: scale at physical pixel resolution
+                    dpr = self.devicePixelRatio()
+                    target_w = int(320 * dpr)
+                    target_h = int(160 * dpr)
+                    scaled_pix = pix.scaled(
+                        target_w,
+                        target_h,
+                        QtCore.Qt.KeepAspectRatio,
+                        QtCore.Qt.SmoothTransformation,
                     )
+                    scaled_pix.setDevicePixelRatio(dpr)
+                    self.content_label.setPixmap(scaled_pix)
+
                 self.content_label.setText("")
                 self.content_label.setStyleSheet("background: transparent;")
+
+                if is_new_image:
+                    self._fade_anim = QtCore.QPropertyAnimation(
+                        self._content_opacity, b"opacity", self
+                    )
+                    self._fade_anim.setDuration(300)
+                    self._fade_anim.setStartValue(0.0)
+                    self._fade_anim.setEndValue(1.0)
+                    self._fade_anim.setEasingCurve(QtCore.QEasingCurve.InOutQuad)
+                    self._fade_anim.start()
+                else:
+                    self._content_opacity.setOpacity(1.0)
         else:
+            self._current_path = None
+            self._content_opacity.setOpacity(1.0)
             self.content_label.setPixmap(QPixmap())
             self.content_label.setText("× Missing")
             self.content_label.setStyleSheet(
@@ -246,7 +283,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self._search_thread = None
         self._worker = None
         self._suggested_steam_id = None
-        self._current_appid = None
+        self._current_appid: str = ""
         self._current_shortcuts_path = ""
         self._current_name = ""
         self._search_generation = 0
@@ -274,10 +311,10 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         # Smart Suggestion Badge
         self.suggestion_widget = QtWidgets.QFrame()
         self.suggestion_widget.setFixedHeight(35)
-        self.suggestion_widget.setFixedWidth(140)
+        self.suggestion_widget.setFixedWidth(165)
         self.suggestion_widget.setStyleSheet(f"""
             QFrame {{
-                background: {PALETTE['bg_card']}; 
+                background: {PALETTE['bg_card']};
                 border: 1px solid {PALETTE['border']};
                 border-radius: 4px;
             }}
@@ -332,14 +369,16 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         toolbox_row.addWidget(self.inject_btn)
 
         # Delete button
-        self.delete_btn = QtWidgets.QPushButton("🗑️")
+        self.delete_btn = QtWidgets.QPushButton()
+        self.delete_btn.setIcon(get_icon("trash"))
+        self.delete_btn.setIconSize(QtCore.QSize(22, 22))
+        self.delete_btn.setToolTip("Delete shortcut")
         self.delete_btn.setFixedSize(40, 40)
         self.delete_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self.delete_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
                 border: none;
-                font-size: 20px;
                 padding: 0px;
             }
             QPushButton:hover {
@@ -370,26 +409,31 @@ class AssetDetailsScreen(QtWidgets.QWidget):
 
         # Edit Input
         self.title_edit = QtWidgets.QLineEdit()
-        self.title_edit.setFixedWidth(400)
+        self.title_edit.setFixedWidth(600)
+        self.title_edit.setMinimumHeight(70)
+        self.title_edit.setAlignment(QtCore.Qt.AlignCenter)
         self.title_edit.setVisible(False)
         self.title_edit.setStyleSheet(f"""
-            font-size: 22px; 
-            font-weight: 700; 
+            font-size: 22px;
+            font-weight: 700;
             color: {PALETTE['text_primary']};
             background: {PALETTE['bg_surface']};
             border: 1px solid {PALETTE['accent']};
+            border-radius: 6px;
         """)
         title_row.addWidget(self.title_edit)
 
         # The Edit/Save Button
-        self.edit_btn = QtWidgets.QPushButton("🖊️")
+        self.edit_btn = QtWidgets.QPushButton()
+        self.edit_btn.setIcon(get_icon("edit"))
+        self.edit_btn.setIconSize(QtCore.QSize(22, 22))
+        self.edit_btn.setToolTip("Rename game")
         self.edit_btn.setFixedSize(40, 40)
         self.edit_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self.edit_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
                 border: none;
-                font-size: 20px;
                 padding: 0px;
             }
             QPushButton:hover {
@@ -519,6 +563,10 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         if self._is_busy:
             self._cancel_active_download()
             return
+
+        if not confirm_steam_closed(self):
+            return
+
         # 1. Determine Steam ID and Force state
         default_id = self._suggested_steam_id if self._suggested_steam_id else ""
         steam_id, ok = QtWidgets.QInputDialog.getText(
@@ -598,6 +646,18 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self._set_busy(False)
         self.status_label.setText("")
         if success:
+            # If an official icon was downloaded, set it in shortcuts.vdf
+            grid_dir = os.path.join(
+                os.path.dirname(self._current_shortcuts_path), "grid"
+            )
+            icon_candidate = os.path.join(grid_dir, f"{self._current_appid}_icon.ico")
+            if os.path.isfile(icon_candidate):
+                update_shortcut_icon(
+                    self._current_shortcuts_path,
+                    self._current_appid,
+                    icon_candidate,
+                )
+
             # Refresh the view to show new assets
             self.load_assets(
                 self._current_name, self._current_shortcuts_path, self._current_appid
@@ -638,7 +698,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             self.suggest_anim.setEasingCurve(QtCore.QEasingCurve.OutQuad)
             self.suggest_anim.start()
 
-            self.status_label.setText(f"💡 Found Steam Match")
+            self.status_label.setText("💡 Found Steam Match")
         elif result == "ERR_NETWORK":
             self._search_state = SearchState.NOT_FOUND
             self._suggested_steam_id = None
@@ -677,21 +737,20 @@ class AssetDetailsScreen(QtWidgets.QWidget):
 
         # Case: Transitioning from View to Edit
         if not self.title_edit.isVisible():
-            # Trigger Backup immediately upon deciding to edit
-            vdf_path = self._current_shortcuts_path
-            if os.path.exists(vdf_path):
-                shutil.copy2(vdf_path, vdf_path + ".bak")
+            if not confirm_steam_closed(self):
+                return
 
             self.title_edit.setText(self._current_name)
             self.title_label.setVisible(False)
             self.title_edit.setVisible(True)
-            self.edit_btn.setText("✅")
+            self.edit_btn.setIcon(get_icon("check"))
+            self.edit_btn.setToolTip("Save new name")
             self.title_edit.setFocus()
 
         # Case: Finalizing Changes (Transitioning from Edit to View)
         else:
             new_name = self.title_edit.text().strip()
-            if new_name and new_name != self._current_name:
+            if self._current_appid and new_name and new_name != self._current_name:
                 success, msg = update_shortcut_name(
                     self._current_shortcuts_path, self._current_appid, new_name
                 )
@@ -705,7 +764,8 @@ class AssetDetailsScreen(QtWidgets.QWidget):
 
             self.title_edit.setVisible(False)
             self.title_label.setVisible(True)
-            self.edit_btn.setText("🖊️")
+            self.edit_btn.setIcon(get_icon("edit"))
+            self.edit_btn.setToolTip("Rename game")
 
     def _trigger_search(self, game_name):
         """Triggers a background Steam search for the given name."""
@@ -733,8 +793,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
                 # Disconnect UI slots so the old thread cannot update this screen
                 self._search_thread.worker.finished.disconnect(self._on_search_finished)
             except (AttributeError, TypeError, RuntimeError) as e:
-                print(f"DEBUG: Signal disconnect error: {e}")
-                pass
+                logger.debug(f"Signal disconnect error: {e}")
             # Move to registry so Python doesn't delete the C++ object mid-run
             AssetDetailsScreen._active_threads.add(self._search_thread)
 
@@ -766,6 +825,11 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self._search_thread.start()
 
     def _on_delete_clicked(self):
+        if not self._current_appid:
+            return
+
+        if not confirm_steam_closed(self):
+            return
 
         # 1. Primary Confirmation
         reply = QtWidgets.QMessageBox.question(
@@ -787,21 +851,18 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             QtWidgets.QMessageBox.Yes,
         )
 
-        # 3. Create Safety Backup
         vdf_path = self._current_shortcuts_path
-        if os.path.exists(vdf_path):
-            shutil.copy2(vdf_path, vdf_path + ".bak")
 
-        # 4. Perform Deletion in VDF
+        # 3. Perform Deletion in VDF
         success, msg = delete_shortcut(vdf_path, self._current_appid)
 
         if success:
-            # 5. Optional Asset File Cleanup
+            # 4. Asset File Cleanup
             if clean_assets == QtWidgets.QMessageBox.Yes:
                 grid_dir = os.path.join(os.path.dirname(vdf_path), "grid")
-                # Look for all 5 patterns ({appid}p.jpg, {appid}.jpg, etc.)
-                for suffix in ["p", "", "_hero", "_logo"]:
-                    for ext in [".jpg", ".png", ".json"]:  # covers image and json
+                # Clean all artwork and icon patterns ({appid}p.jpg, {appid}_icon.ico, etc.)
+                for suffix in ["p", "", "_hero", "_logo", "_icon"]:
+                    for ext in [".jpg", ".png", ".json", ".ico"]:
                         target_file = os.path.join(
                             grid_dir, f"{self._current_appid}{suffix}{ext}"
                         )
@@ -809,9 +870,9 @@ class AssetDetailsScreen(QtWidgets.QWidget):
                             try:
                                 os.remove(target_file)
                             except Exception as e:
-                                print(f"DEBUG: Could not delete {target_file}: {e}")
+                                logger.warning(f"Could not delete {target_file}: {e}")
 
-            # 6. Finalize and Exit
+            # 5. Finalize and Exit
             self.name_changed.emit()  # Refresh the main list
             self.back_requested.emit()  # Go back to the list automatically
         else:
@@ -821,6 +882,9 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         """Opens a file dialog and copies a local image to the Steam grid folder."""
         if asset_type == "json":
             # Skip JSON
+            return
+
+        if not confirm_steam_closed(self):
             return
 
         # 1. Pick the file
@@ -853,7 +917,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
                     try:
                         os.remove(potential_old_file)
                     except Exception as e:
-                        print(f"DEBUG: Could not remove old asset: {e}")
+                        logger.warning(f"Could not remove old asset: {e}")
             # 3. Copy and Overwrite
             shutil.copy2(file_path, dest_path)
 

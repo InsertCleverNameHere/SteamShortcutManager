@@ -1,31 +1,47 @@
-# --- Python ---
+# --- Byte-compiled / optimized / virtual environments ---
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+.venv/
 env/
 venv/
 ENV/
+
+# --- Packaging, Build & Setuptools ---
 build/
 dist/
 *.egg-info/
+.eggs/
+*.spec.bak
+
+# --- AppImage & Linux Packaging Artifacts ---
+AppDir/
+squashfs-root/
+*.AppImage
+*.zsync
+
+# --- Testing & Quality Caches ---
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+htmlcov/
 
 # --- Application Specific ---
 *.bak
+ssm-backups/
+*.log
 parameters.json
 
-# --- VS Code ---
+# --- VS Code & IDEs ---
 .vscode/*
 !.vscode/settings.json
 .history/
 
-# --- Windows OS ---
+# --- OS Artifacts ---
 Thumbs.db
 desktop.ini
 $RECYCLE.BIN/
-
-# -- Build system ---
-dist/
-build/
-*.spec.bak
+.DS_Store

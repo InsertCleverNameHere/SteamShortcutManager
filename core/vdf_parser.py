@@ -1,189 +1,111 @@
 """
-Thin wrapper around the vdf library for binary shortcuts.vdf read/write.
-All higher-level shortcut manipulation goes here so the rest of the app
-never touches vdf directly.
+core/vdf_parser.py
+Backward-compatibility bridge routing calls through core.shortcuts_io and core.appid.
+Protects all mutations with ShortcutsTransaction and atomic writes.
 """
 
-import os
-import tempfile
-import vdf
-import zlib
+from pathlib import Path
+
+from core.appid import normalize_appid
+from core.shortcuts_io import (
+    ShortcutsFileError,
+    ShortcutsTransaction,
+    get_shortcut_list,
+    get_value_case_insensitive,
+)
+from core.shortcuts_io import (
+    add_shortcut as _io_add_shortcut,
+)
+from core.shortcuts_io import (
+    delete_shortcut as _io_delete_shortcut,
+)
+from core.shortcuts_io import (
+    load_shortcuts as _io_load_shortcuts,
+)
+from core.shortcuts_io import (
+    save_shortcuts_atomic as save_shortcuts,
+)
+from core.shortcuts_io import (
+    update_shortcut_icon as _io_update_shortcut_icon,
+)
+from core.shortcuts_io import (
+    update_shortcut_name as _io_update_shortcut_name,
+)
+
+__all__ = [
+    "ShortcutsFileError",
+    "load_shortcuts",
+    "save_shortcuts",
+    "get_shortcut_list",
+    "get_value_case_insensitive",
+    "normalize_appid",
+    "add_new_shortcut",
+    "update_shortcut_name",
+    "update_shortcut_icon",
+    "delete_shortcut",
+]
 
 
-def load_shortcuts(path: str) -> dict:
-    """Read a binary shortcuts.vdf and return the parsed dict."""
-    if not os.path.exists(path) or os.path.getsize(path) == 0:
-        return {"shortcuts": {}}
+def load_shortcuts(path: str | Path) -> dict:
+    """Loads shortcuts.vdf strictly, raising ShortcutsFileError on corrupted files."""
+    return _io_load_shortcuts(path, strict=True)
+
+
+def add_new_shortcut(
+    vdf_path: str, game_name: str, exe_path: str, icon_path: str = ""
+) -> tuple[bool, str, str | None]:
+    """
+    Safely adds a new shortcut wrapped in ShortcutsTransaction.
+    Stores appid natively as int32 and returns (success, msg, unsigned_str_appid).
+    """
     try:
-        with open(path, "rb") as f:
-            return vdf.binary_load(f)
+        with ShortcutsTransaction(vdf_path) as tx:
+            appid_str, _ = _io_add_shortcut(
+                tx.data,
+                game_name=game_name,
+                exe_path=exe_path,
+                icon_path=icon_path,
+            )
+        return True, "Shortcut added!", appid_str
     except Exception as e:
-        print(f"DEBUG: VDF Load error at {path}: {e}")
-        # If the file is corrupted, return an empty structure to prevent crashes
-        return {"shortcuts": {}}
+        return False, f"Error: {e}", None
 
 
-def save_shortcuts(path: str, data: dict) -> None:
-    """
-    Write a shortcuts dict back to a binary shortcuts.vdf atomically.
-
-    Writes to a temp file in the same directory first, flushes it to disk,
-    then swaps it into place with os.replace(). This guarantees the target
-    file is either the old complete version or the new complete version —
-    never a partially-written/truncated file, even if the process crashes
-    or the disk fills up mid-write.
-    """
-    target_dir = os.path.dirname(path) or "."
-    os.makedirs(target_dir, exist_ok=True)
-
-    fd, tmp_path = tempfile.mkstemp(
-        dir=target_dir, prefix=".shortcuts_", suffix=".vdf.tmp"
-    )
+def update_shortcut_name(
+    vdf_path: str, appid: str | int, new_name: str
+) -> tuple[bool, str]:
+    """Safely updates shortcut name wrapped in ShortcutsTransaction, preserving key casing."""
     try:
-        with os.fdopen(fd, "wb") as f:
-            vdf.binary_dump(data, f)
-            f.flush()
-            os.fsync(f.fileno())  # force write from OS buffer to physical disk
-
-        os.replace(tmp_path, path)  # atomic on Windows and POSIX
-    except Exception:
-        # Clean up the temp file if anything went wrong before the swap
-        if os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
-        raise
-
-
-def get_shortcut_list(data: dict) -> list[dict]:
-    """Return the shortcuts as a plain list, normalised from the keyed dict."""
-    return list(data.get("shortcuts", {}).values())
-
-
-def get_value_case_insensitive(shortcut_dict: dict, target_key: str, default=""):
-    """
-    Searches for a key in the shortcut dictionary regardless of its casing.
-    """
-    for key, value in shortcut_dict.items():
-        if key.lower() == target_key.lower():
-            return value
-    return default
-
-
-def normalize_appid(appid) -> str:
-    """Converts AppIDs (int or str) to unsigned strings (e.g. 3468334431)"""
-    if appid is None:
-        return "0"
-    try:
-        # Convert to int, then use bitmask to ensure it's a positive 32-bit value
-        val = int(appid)
-        return str(val & 0xFFFFFFFF)
-    except (ValueError, TypeError):
-        return str(appid)
-
-
-def add_new_shortcut(vdf_path, game_name, exe_path, icon_path=""):
-    """
-    Parses current VDF, appends a new entry, and saves it.
-    """
-    try:
-        data = load_shortcuts(vdf_path)
-        if "shortcuts" not in data:
-            data["shortcuts"] = {}
-
-        start_dir = os.path.dirname(exe_path)
-        unique_name = (exe_path + game_name).encode("utf-8")
-
-        # Generate the ID exactly as the reference script does
-        unsigned_appid = zlib.crc32(unique_name) | 0x80000000
-
-        # We store the appid as a STRING.
-        # This prevents "i format" and "unpack" errors in the vdf library.
-        str_appid = str(unsigned_appid & 0xFFFFFFFF)
-
-        new_entry = {
-            "appid": str_appid,
-            "AppName": game_name,
-            "Exe": f'"{exe_path}"',
-            "StartDir": f'"{start_dir}\\"',
-            "icon": f'"{os.path.normpath(icon_path)}"' if icon_path else "",
-            "ShortcutPath": "",
-            "LaunchOptions": "",
-            "IsHidden": 0,
-            "AllowDesktopConfig": 1,
-            "AllowOverlay": 1,
-            "OpenVR": 0,
-            "Devkit": 0,
-            "DevkitGameID": "",
-            "DevkitOverrideAppID": 0,
-            "LastPlayTime": 0,
-            "FlatpakAppID": "",
-            "tags": {},
-        }
-
-        # Find the next numeric index ('0', '1', '2'...)
-        next_idx = str(len(data["shortcuts"]))
-        data["shortcuts"][next_idx] = new_entry
-
-        save_shortcuts(vdf_path, data)
-        return True, "Shortcut added!", str_appid
-
-    except Exception as e:
-        return False, f"Error: {str(e)}", None
-
-
-def update_shortcut_name(vdf_path, appid, new_name):
-    """Finds a shortcut by appid and updates its AppName."""
-    try:
-        data = load_shortcuts(vdf_path)
-        if "shortcuts" not in data:
-            return False, "No shortcuts found."
-
-        found = False
-        # Iterate through the numbered keys ('0', '1', etc.)
-        for idx, entry in data["shortcuts"].items():
-            if normalize_appid(entry.get("appid")) == normalize_appid(appid):
-                entry["AppName"] = new_name
-                found = True
-                break
-
-        if found:
-            save_shortcuts(vdf_path, data)
-            return True, "Name updated."
-        return False, "Shortcut not found in file."
+        with ShortcutsTransaction(vdf_path) as tx:
+            found = _io_update_shortcut_name(tx.data, appid, new_name)
+            if not found:
+                return False, "Shortcut not found in file."
+        return True, "Name updated."
     except Exception as e:
         return False, str(e)
 
 
-def delete_shortcut(vdf_path, appid):
-    """
-    Finds a shortcut by appid, removes it, and re-indexes the file.
-    """
+def update_shortcut_icon(
+    vdf_path: str, appid: str | int, icon_path: str
+) -> tuple[bool, str]:
+    """Safely updates shortcut icon wrapped in ShortcutsTransaction, preserving key casing."""
     try:
-        data = load_shortcuts(vdf_path)
-        shortcuts = data.get("shortcuts", {})
+        with ShortcutsTransaction(vdf_path) as tx:
+            found = _io_update_shortcut_icon(tx.data, appid, icon_path)
+            if not found:
+                return False, "Shortcut not found in file."
+        return True, "Icon updated."
+    except Exception as e:
+        return False, str(e)
 
-        # 1. Find the target key
-        target_key = None
-        for key, entry in shortcuts.items():
-            if normalize_appid(entry.get("appid")) == normalize_appid(appid):
-                target_key = key
-                break
 
-        if target_key is not None:
-            # 2. Remove the entry
-            del shortcuts[target_key]
-
-            # 3. Re-index keys to be sequential: "0", "1", "2"...
-            new_shortcuts = {}
-            for i, val in enumerate(shortcuts.values()):
-                new_shortcuts[str(i)] = val
-            data["shortcuts"] = new_shortcuts
-
-            save_shortcuts(vdf_path, data)
-            return True, "Shortcut removed."
-
-        return False, "Shortcut not found in file."
+def delete_shortcut(vdf_path: str, appid: str | int) -> tuple[bool, str]:
+    """Safely removes a shortcut wrapped in ShortcutsTransaction with sequential re-indexing."""
+    try:
+        with ShortcutsTransaction(vdf_path) as tx:
+            deleted = _io_delete_shortcut(tx.data, appid)
+            if not deleted:
+                return False, "Shortcut not found in file."
+        return True, "Shortcut removed."
     except Exception as e:
         return False, str(e)
