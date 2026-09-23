@@ -1,21 +1,13 @@
 import json
 import os
+import requests
 import socket
 import threading
 import time
-
-import requests
 from steam.client import SteamClient
 
-from core.log import get_logger
-
-logger = get_logger("asset_provider")
-
-# Base URLs for Steam's official assets
+# The base URL for Steam's official assets
 CDN_BASE = "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps"
-COMMUNITY_ICON_BASE = (
-    "https://shared.fastly.steamstatic.com/community_assets/images/apps"
-)
 
 # Timeouts
 _ASSET_REQUEST_TIMEOUT = (
@@ -47,7 +39,7 @@ def search_steam_apps(query: str):
             }
         return None  # No results found (successfully queried)
     except (requests.RequestException, ValueError) as e:
-        logger.warning(f"Steam Store Search error: {e}")
+        print(f"DEBUG: Steam Store Search error: {e}")
         return "ERR_NETWORK"  # Specific error indicator
 
 
@@ -134,7 +126,7 @@ def download_assets(
                 return False, "❌ Connection timed out (Steam servers may be slow)."
             if is_aborted():
                 return False, "❌ Cancelled"
-            return False, f"❌ Steam API Error: {e!s}"
+            return False, f"❌ Steam API Error: {str(e)}"
 
         if timed_out:
             return False, "❌ Operation aborted."
@@ -143,7 +135,7 @@ def download_assets(
         if not client or login_result != 1:
             return False, "❌ Connection failed."
 
-        report("📑 [2/4] Fetching manifest...")
+        report(f"📑 [2/4] Fetching manifest...")
         try:
             # AppIDs must be integers for the steam library lookup
             product_info = client.get_product_info(apps=[int(steam_appid)])
@@ -155,7 +147,7 @@ def download_assets(
                 )
             if is_aborted():
                 return False, "❌ Cancelled."
-            return False, f"❌ Connection lost during manifest fetch: {e!s}"
+            return False, f"❌ Connection lost during manifest fetch: {str(e)}"
 
         if timed_out:
             return False, "❌ Timed out fetching app metadata. Check your connection."
@@ -188,7 +180,6 @@ def download_assets(
         }
 
         downloaded_count = 0
-        os.makedirs(grid_dir, exist_ok=True)
         for suffix, (key, default_name) in mapping.items():
             if is_aborted():
                 return False, "❌ Cancelled"
@@ -232,7 +223,7 @@ def download_assets(
                     pass  # Let it retry or fail gracefully
 
                 if (
-                    attempt == 0 and not is_aborted()
+                    attempt == 0 and not is_aborted
                 ):  # If first attempt failed, wait briefly
                     time.sleep(1)
 
@@ -242,45 +233,10 @@ def download_assets(
         if is_aborted():
             return False, "❌ Cancelled."
 
-        # Handle official client icon (.ico) from Fastly Community CDN
-        client_icon_hash = common.get("clienticon") or common.get("icon")
-        if client_icon_hash and not is_aborted():
-            icon_url = f"{COMMUNITY_ICON_BASE}/{steam_appid}/{client_icon_hash}.ico"
-            local_icon_path = os.path.join(grid_dir, f"{local_appid}_icon.ico")
-
-            if force or not os.path.exists(local_icon_path):
-                report("📥 [3/4] Downloading icon...")
-                download_success = False
-                for attempt in range(2):
-                    if is_aborted():
-                        return False, "❌ Cancelled"
-                    try:
-                        res = requests.get(icon_url, timeout=_ASSET_REQUEST_TIMEOUT)
-                        if res.status_code == 200:
-                            with open(local_icon_path, "wb") as f:
-                                f.write(res.content)
-                            downloaded_count += 1
-                            download_success = True
-                            break
-                    except requests.exceptions.Timeout:
-                        suffix_msg = "retrying..." if attempt == 0 else "skipping"
-                        report(f"⚠️ icon timed out — {suffix_msg}")
-                    except requests.exceptions.RequestException:
-                        pass
-
-                    if attempt == 0 and not is_aborted():
-                        time.sleep(1)
-
-                if not download_success:
-                    report("⚠️ Skipping icon: download failed after 2 attempts")
-
-        if is_aborted():
-            return False, "❌ Cancelled."
-
         # Handle JSON positioning
         json_path = os.path.join(grid_dir, f"{local_appid}.json")
         if force or not os.path.exists(json_path):
-            report("📝 [4/4] Generating JSON...")
+            report(f"📝 [4/4] Generating JSON...")
             logo_pos = assets_meta.get("logo_position")
             if logo_pos:
                 json_data = {
@@ -302,8 +258,8 @@ def download_assets(
             return False, "❌ Cancelled."
         if timed_out:
             return False, "❌ Operation timed out. Check your connection and try again."
-        logger.exception(f"Global Download Error: {e}")
-        return False, f"❌ Download error: {e!s}"
+        print(f"DEBUG: Global Download Error: {e}")
+        return False, f"❌ Download error: {str(e)}"
     finally:
         timer.cancel()
         if client is not None:

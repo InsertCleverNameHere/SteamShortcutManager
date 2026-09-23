@@ -1,19 +1,10 @@
 import os
-from datetime import datetime
-
-from PySide6 import QtCore, QtWidgets
+import shutil
+from PySide6 import QtWidgets, QtCore
 from PySide6.QtGui import QAction, QActionGroup
-
 from core import vdf_parser
-from core.lnk import resolve_lnk
-from core.log import get_logger
-from core.pe_info import get_game_name_from_pe
-from core.platform import get_platform
-from core.shortcuts_io import ShortcutsFileError, get_available_backups, restore_backup
-from ui.theme import PALETTE, get_icon
-from ui.widgets.steam_guard import confirm_steam_closed
-
-logger = get_logger("shortcut_list_screen")
+from core.utils_win import resolve_windows_shortcut, get_game_name_from_metadata
+from ui.theme import PALETTE
 
 
 class AddShortcutWorker(QtCore.QObject):
@@ -28,11 +19,11 @@ class AddShortcutWorker(QtCore.QObject):
     def run(self):
         file_label = os.path.splitext(os.path.basename(self.raw_path))[0]
         if self.raw_path.lower().endswith(".lnk"):
-            exe_path = resolve_lnk(self.raw_path)
+            exe_path = resolve_windows_shortcut(self.raw_path)
             derived_name = file_label
         else:
             exe_path = self.raw_path
-            derived_name = get_game_name_from_pe(exe_path)
+            derived_name = get_game_name_from_metadata(exe_path)
         self.finished.emit(self.raw_path, exe_path, derived_name)
 
 
@@ -120,42 +111,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
         header.addWidget(self.add_btn)
 
         layout.addLayout(header)
-        layout.addSpacing(8)
-
-        # Persistent Steam-Running Banner (Accordion Container)
-        self.running_banner = QtWidgets.QFrame()
-        self.running_banner.setStyleSheet(f"""
-            QFrame {{
-                background-color: rgba(232, 168, 56, 20);
-                border: 1px solid {PALETTE['warning']};
-                border-radius: 6px;
-            }}
-            QLabel {{
-                color: {PALETTE['warning']};
-                font-size: 12px;
-                font-weight: 600;
-                background: transparent;
-                border: none;
-            }}
-        """)
-        banner_layout = QtWidgets.QHBoxLayout(self.running_banner)
-        banner_layout.setContentsMargins(12, 4, 12, 4)
-        banner_lbl = QtWidgets.QLabel(
-            "⚠️ Steam is running — changes may be overwritten on exit. We recommend closing Steam."
-        )
-        banner_lbl.setWordWrap(True)
-        banner_lbl.setAlignment(QtCore.Qt.AlignCenter)
-        banner_layout.addWidget(banner_lbl)
-
-        # Opacity effect and zero-height initial state
-        self._banner_opacity = QtWidgets.QGraphicsOpacityEffect(self.running_banner)
-        self._banner_opacity.setOpacity(0.0)
-        self.running_banner.setGraphicsEffect(self._banner_opacity)
-        self.running_banner.setMaximumHeight(0)
-        self.running_banner.setVisible(False)
-
-        layout.addWidget(self.running_banner)
-        layout.addSpacing(8)
+        layout.addSpacing(20)
 
         # Scroll area for shortcuts
         self.scroll_area = QtWidgets.QScrollArea()
@@ -189,55 +145,6 @@ class ShortcutListScreen(QtWidgets.QWidget):
         # 2. Surgical Addition: Resume and redraw once at the end
         self.list_container.setUpdatesEnabled(True)
 
-    def _animate_banner(self, show: bool):
-        """Smoothly expands or collapses the banner with parallel height and opacity animations."""
-        target_height = 36 if show else 0
-        target_opacity = 1.0 if show else 0.0
-
-        # Don't re-animate if already in the target state
-        if (
-            show
-            and self.running_banner.isVisible()
-            and self.running_banner.maximumHeight() == target_height
-        ):
-            return
-        if not show and not self.running_banner.isVisible():
-            return
-
-        if (
-            hasattr(self, "_banner_group")
-            and self._banner_group.state() == QtCore.QAbstractAnimation.Running
-        ):
-            self._banner_group.stop()
-
-        if show:
-            self.running_banner.setVisible(True)
-
-        self._banner_group = QtCore.QParallelAnimationGroup(self)
-
-        # 1. Animate Opacity
-        anim_op = QtCore.QPropertyAnimation(self._banner_opacity, b"opacity")
-        anim_op.setDuration(380)
-        anim_op.setStartValue(self._banner_opacity.opacity())
-        anim_op.setEndValue(target_opacity)
-
-        # 2. Animate Height (Smooth Accordion)
-        anim_h = QtCore.QPropertyAnimation(self.running_banner, b"maximumHeight")
-        anim_h.setDuration(380)
-        anim_h.setStartValue(self.running_banner.maximumHeight())
-        anim_h.setEndValue(target_height)
-        anim_h.setEasingCurve(QtCore.QEasingCurve.InOutQuad)
-
-        self._banner_group.addAnimation(anim_op)
-        self._banner_group.addAnimation(anim_h)
-
-        if not show:
-            self._banner_group.finished.connect(
-                lambda: self.running_banner.setVisible(False)
-            )
-
-        self._banner_group.start()
-
     def _show_sort_menu(self):
         """Builds and shows the sort options popup, anchored to the sort button."""
         menu = QtWidgets.QMenu(self)
@@ -258,11 +165,6 @@ class ShortcutListScreen(QtWidgets.QWidget):
             group.addAction(action)
             menu.addAction(action)
 
-        menu.addSeparator()
-        restore_action = QAction("Restore from backup…", menu)
-        restore_action.triggered.connect(self._on_restore_backup_clicked)
-        menu.addAction(restore_action)
-
         # Anchor the menu directly under the button, left-aligned to it
         menu.exec(self.sort_btn.mapToGlobal(self.sort_btn.rect().bottomLeft()))
 
@@ -272,74 +174,12 @@ class ShortcutListScreen(QtWidgets.QWidget):
         self._sort_mode = mode
         self.load_user_shortcuts(self._current_user_obj)
 
-    def _on_restore_backup_clicked(self):
-        if not getattr(self, "_current_user_obj", None):
-            return
-
-        shortcuts_path = self._current_user_obj.shortcuts_path
-        backups = get_available_backups(shortcuts_path)
-
-        if not backups:
-            QtWidgets.QMessageBox.information(
-                self,
-                "No Backups",
-                "No automatic backups were found in 'ssm-backups' for this profile.",
-            )
-            return
-
-        # Build readable labels with formatted timestamps
-        labels = []
-        for b in backups:
-            try:
-                mtime = datetime.fromtimestamp(b.stat().st_mtime)
-                date_str = mtime.strftime("%Y-%m-%d %H:%M:%S")
-            except OSError:
-                date_str = b.name
-            size_kb = max(1, round(b.stat().st_size / 1024))
-            labels.append(f"{date_str}  ({size_kb} KB)")
-
-        chosen_label, ok = QtWidgets.QInputDialog.getItem(
-            self,
-            "Restore Backup",
-            "Select a backup to restore (replaces current shortcuts):",
-            labels,
-            0,
-            False,
-        )
-
-        if not ok or not chosen_label:
-            return
-
-        if not confirm_steam_closed(self):
-            return
-
-        chosen_idx = labels.index(chosen_label)
-        chosen_backup = backups[chosen_idx]
-
-        try:
-            success = restore_backup(chosen_backup, shortcuts_path)
-            if success:
-                QtWidgets.QMessageBox.information(
-                    self,
-                    "Backup Restored",
-                    "The shortcuts file was successfully restored from backup.",
-                )
-                self.load_user_shortcuts(self._current_user_obj)
-            else:
-                QtWidgets.QMessageBox.warning(
-                    self, "Restore Failed", "Could not restore the selected backup."
-                )
-        except Exception as e:
-            QtWidgets.QMessageBox.critical(
-                self, "Restore Error", f"Failed to restore backup: {e}"
-            )
-
     def _on_add_clicked(self):
         raw_path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             "Select Game",
             "",
-            get_platform().file_dialog_filter,
+            "Games (*.exe *.lnk);;All Files (*.*)",
         )
         if not raw_path:
             return
@@ -351,9 +191,6 @@ class ShortcutListScreen(QtWidgets.QWidget):
         Shared entry point for both the file-dialog Add flow and drag-and-drop.
         """
         if not self.add_btn.isEnabled():
-            return
-
-        if not confirm_steam_closed(self):
             return
 
         # Ensure refresh button is disabled during resolution
@@ -373,8 +210,16 @@ class ShortcutListScreen(QtWidgets.QWidget):
 
         self._add_thread.start()
 
+    _DROPPABLE_EXTENSIONS = (".exe", ".lnk")
+
     def _extract_droppable_path(self, mime_data) -> str | None:
-        """Returns the local file path if the drop contains exactly one valid game executable."""
+        """
+        Returns the local file path if the drop contains exactly one valid
+        .exe/.lnk file. Returns None for empty drops, multi-file drops, or
+        drops containing anything else — multi-file is rejected outright
+        rather than silently picking one, so the user gets clear "no-drop"
+        feedback instead of an ambiguous partial success.
+        """
         if not mime_data.hasUrls():
             return None
 
@@ -386,66 +231,32 @@ class ShortcutListScreen(QtWidgets.QWidget):
         if not url.isLocalFile():
             return None
 
-        path = os.path.normpath(url.toLocalFile())
-        allowed = get_platform().droppable_extensions
-        if path.lower().endswith(allowed) and os.path.isfile(path):
+        path = url.toLocalFile()
+        if path.lower().endswith(self._DROPPABLE_EXTENSIONS) and os.path.isfile(path):
             return path
         return None
 
     def dragEnterEvent(self, event):
-        # Accept drops that contain local files so dropEvent can process or explain errors
-        if event.mimeData().hasUrls():
+        if self._extract_droppable_path(event.mimeData()):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls():
+        # Required alongside dragEnterEvent on some platforms/Qt versions
+        # for the drop to actually register during mouse movement.
+        if self._extract_droppable_path(event.mimeData()):
             event.acceptProposedAction()
         else:
             event.ignore()
 
     def dropEvent(self, event):
-        if not event.mimeData().hasUrls():
+        path = self._extract_droppable_path(event.mimeData())
+        if not path:
             event.ignore()
             return
-
-        urls = event.mimeData().urls()
-        if len(urls) != 1 or not urls[0].isLocalFile():
-            event.ignore()
-            QtWidgets.QMessageBox.information(
-                self,
-                "Multiple Items Dropped",
-                "Please drag and drop a single game executable at a time.",
-            )
-            return
-
-        path = os.path.normpath(urls[0].toLocalFile())
-        valid_path = self._extract_droppable_path(event.mimeData())
-
-        if valid_path:
-            event.acceptProposedAction()
-            self._start_add_from_path(valid_path)
-            return
-
-        # Friendly rejection messages per Plan §2.1
-        event.ignore()
-        ext = os.path.splitext(path)[1].lower() or "folder"
-        if ext in (".bat", ".msi"):
-            msg = (
-                f"'{ext}' files are scripts or installers and cannot be launched directly as games.\n\n"
-                "Please drag and drop the main game executable (.exe) instead."
-            )
-        elif not os.path.isfile(path):
-            msg = "Directories cannot be added as shortcuts. Please drop the main game executable (.exe)."
-        else:
-            allowed_str = ", ".join(get_platform().droppable_extensions)
-            msg = (
-                f"Unsupported file type ({ext}).\n\n"
-                f"Only game executables ({allowed_str}) can be added on this platform."
-            )
-
-        QtWidgets.QMessageBox.information(self, "Unsupported Drop", msg)
+        event.acceptProposedAction()
+        self._start_add_from_path(path)
 
     def _on_shortcut_resolved(self, raw_path, exe_path, derived_name):
         """Continues the Add Shortcut flow after background resolution."""
@@ -459,9 +270,13 @@ class ShortcutListScreen(QtWidgets.QWidget):
         if ok and game_name:
             vdf_path = self._current_user_obj.shortcuts_path
 
-            # Save to VDF (icon left empty by default per Plan §2.4)
+            # Automated Backup
+            if os.path.exists(vdf_path):
+                shutil.copy2(vdf_path, vdf_path + ".bak")
+
+            # Save to VDF
             success, msg, new_id = vdf_parser.add_new_shortcut(
-                vdf_path, game_name, exe_path
+                vdf_path, game_name, exe_path, icon_path=exe_path
             )
 
             if success:
@@ -480,12 +295,11 @@ class ShortcutListScreen(QtWidgets.QWidget):
 
     @staticmethod
     def _asset_complete(appid: str, grid_files: set) -> bool:
-        img_exts = (".jpg", ".png", ".jpeg")
         return (
-            any(f"{appid}p{e}" in grid_files for e in img_exts)
-            and any(f"{appid}{e}" in grid_files for e in img_exts)
-            and any(f"{appid}_hero{e}" in grid_files for e in img_exts)
-            and any(f"{appid}_logo{e}" in grid_files for e in img_exts)
+            any(f"{appid}p{e}" in grid_files for e in (".jpg", ".png"))
+            and any(f"{appid}{e}" in grid_files for e in (".jpg", ".png"))
+            and any(f"{appid}_hero{e}" in grid_files for e in (".jpg", ".png"))
+            and any(f"{appid}_logo{e}" in grid_files for e in (".png", ".jpg"))
             and f"{appid}.json" in grid_files
         )
 
@@ -496,10 +310,6 @@ class ShortcutListScreen(QtWidgets.QWidget):
         # Fallback to userdata_id if persona_name is missing
         display_name = user_obj.persona_name or user_obj.userdata_id
         self.title_label.setText(f"{display_name}'s Library")
-
-        # Update persistent Steam-running banner with smooth accordion transition
-        is_running = bool(get_platform().is_steam_running())
-        self._animate_banner(is_running)
 
         # Pre-scan the grid folder once to avoid O(N) disk hits in the loop
         grid_dir = os.path.join(os.path.dirname(user_obj.shortcuts_path), "grid")
@@ -517,7 +327,6 @@ class ShortcutListScreen(QtWidgets.QWidget):
 
         # Load the data
         try:
-            self.add_btn.setEnabled(True)
             data = vdf_parser.load_shortcuts(user_obj.shortcuts_path)
             shortcuts = vdf_parser.get_shortcut_list(data)
 
@@ -550,9 +359,8 @@ class ShortcutListScreen(QtWidgets.QWidget):
                 empty_layout.setContentsMargins(0, 80, 0, 0)
                 empty_layout.setSpacing(10)
 
-                icon_lbl = QtWidgets.QLabel()
-                icon_lbl.setPixmap(get_icon("folder").pixmap(48, 48))
-                icon_lbl.setStyleSheet("background: transparent;")
+                icon_lbl = QtWidgets.QLabel("📂")
+                icon_lbl.setStyleSheet("font-size: 48px; background: transparent;")
                 icon_lbl.setAlignment(QtCore.Qt.AlignCenter)
 
                 msg_lbl = QtWidgets.QLabel("No shortcuts found")
@@ -636,50 +444,6 @@ class ShortcutListScreen(QtWidgets.QWidget):
                 self._card_data.append((card, name.lower()))
 
                 self.list_layout.addWidget(card)
-
-        except ShortcutsFileError as err:
-            logger.error(f"Corruption detected in shortcuts file: {err}")
-            self.add_btn.setEnabled(False)
-
-            err_container = QtWidgets.QWidget()
-            err_layout = QtWidgets.QVBoxLayout(err_container)
-            err_layout.setAlignment(QtCore.Qt.AlignCenter)
-            err_layout.setContentsMargins(0, 60, 0, 0)
-            err_layout.setSpacing(12)
-
-            icon_lbl = QtWidgets.QLabel("⚠️")
-            icon_lbl.setStyleSheet("font-size: 48px; background: transparent;")
-            icon_lbl.setAlignment(QtCore.Qt.AlignCenter)
-
-            title_lbl = QtWidgets.QLabel("Shortcuts File Corrupted")
-            title_lbl.setObjectName("heading")
-            title_lbl.setAlignment(QtCore.Qt.AlignCenter)
-            title_lbl.setStyleSheet(
-                f"color: {PALETTE['danger']}; background: transparent;"
-            )
-
-            desc_lbl = QtWidgets.QLabel(
-                "The shortcuts.vdf file is corrupted or improperly formatted.\n"
-                "To prevent data loss, adding shortcuts is disabled until a backup is restored."
-            )
-            desc_lbl.setObjectName("subheading")
-            desc_lbl.setAlignment(QtCore.Qt.AlignCenter)
-            desc_lbl.setStyleSheet(
-                f"color: {PALETTE['text_muted']}; background: transparent;"
-            )
-
-            restore_btn = QtWidgets.QPushButton("Restore from Backup…")
-            restore_btn.setFixedWidth(200)
-            restore_btn.setFixedHeight(38)
-            restore_btn.clicked.connect(self._on_restore_backup_clicked)
-
-            err_layout.addWidget(icon_lbl)
-            err_layout.addWidget(title_lbl)
-            err_layout.addWidget(desc_lbl)
-            err_layout.addSpacing(8)
-            err_layout.addWidget(restore_btn, alignment=QtCore.Qt.AlignCenter)
-
-            self.list_layout.addWidget(err_container)
 
         except Exception as e:
             error_lbl = QtWidgets.QLabel(f"Error loading shortcuts: {e}")

@@ -4,22 +4,6 @@ Steam-adjacent dark theme: deep charcoal base, steel-blue accents,
 clean Inter/system sans-serif throughout.
 """
 
-import sys
-from pathlib import Path
-
-from PySide6.QtGui import QFontDatabase, QIcon
-
-_ICONS_DIR = Path(__file__).parent / "resources" / "icons"
-
-
-def get_icon(name: str) -> QIcon:
-    """Returns a QIcon from ui/resources/icons/<name>.svg."""
-    svg_path = _ICONS_DIR / f"{name}.svg"
-    if svg_path.is_file():
-        return QIcon(str(svg_path))
-    return QIcon()
-
-
 PALETTE = {
     "bg_deep": "#0f1114",
     "bg_surface": "#1a1d23",
@@ -62,7 +46,7 @@ APP_STYLESHEET = f"""
 
     QScrollBar::handle:vertical {{
         background-color: {PALETTE['text_muted']};
-        border-radius: 3px;
+        border-radius: 3px; 
         min-height: 40px;
         margin: 2px 2px;
     }}
@@ -99,10 +83,7 @@ APP_STYLESHEET = f"""
         background-color: {PALETTE['accent_dim']};
     }}
 
-    QPushButton:focus {{
-        border: 1px solid #7cb5ec;
-    }}
-
+    
     QPushButton:disabled {{
         background-color: {PALETTE['bg_card']};
         color: {PALETTE['text_muted']};
@@ -117,11 +98,6 @@ APP_STYLESHEET = f"""
 
     QPushButton#secondary:hover {{
         background-color: {PALETTE['bg_card_hover']};
-        color: {PALETTE['text_primary']};
-    }}
-
-    QPushButton#secondary:focus {{
-        border: 1px solid {PALETTE['accent']};
         color: {PALETTE['text_primary']};
     }}
 
@@ -178,30 +154,3 @@ APP_STYLESHEET = f"""
         /* We'll use a simple Unicode-like checkmark style via border/background */
     }}
 """
-
-
-def get_app_icon() -> QIcon:
-    """Returns the application icon, preferring PNG on Linux and ICO on Windows."""
-    assets_dir = Path(__file__).resolve().parent.parent / "assets"
-    png_path = assets_dir / "icon.png"
-    ico_path = assets_dir / "icon.ico"
-
-    if sys.platform != "win32" and png_path.is_file():
-        return QIcon(str(png_path))
-    if ico_path.is_file():
-        return QIcon(str(ico_path))
-    if png_path.is_file():
-        return QIcon(str(png_path))
-    return QIcon()
-
-
-_FONTS_DIR = Path(__file__).parent / "resources" / "fonts"
-
-
-def load_bundled_fonts() -> bool:
-    """Registers bundled application fonts (Inter) into the Qt font database."""
-    font_path = _FONTS_DIR / "Inter.ttf"
-    if font_path.is_file():
-        font_id = QFontDatabase.addApplicationFont(str(font_path))
-        return font_id != -1
-    return False

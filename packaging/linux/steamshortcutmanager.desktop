@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=Steam Shortcut Manager
-Comment=Manage Steam non-Steam game shortcuts and inject official grid artwork
-Exec=steamshortcutmanager %U
-Icon=steamshortcutmanager
-Terminal=false
-Type=Application
-Categories=Game;Utility;
-StartupWMClass=steamshortcutmanager
