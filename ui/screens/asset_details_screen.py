@@ -139,6 +139,13 @@ class AssetSlot(QtWidgets.QWidget):
         self.content_label = QtWidgets.QLabel()
         self.content_label.setMinimumHeight(160)
         self.content_label.setAlignment(QtCore.Qt.AlignTop)
+
+        # Opacity effect for smooth artwork fade-in
+        self._content_opacity = QtWidgets.QGraphicsOpacityEffect(self.content_label)
+        self._content_opacity.setOpacity(1.0)
+        self.content_label.setGraphicsEffect(self._content_opacity)
+        self._current_path: str | None = None
+
         layout.addWidget(self.content_label)
 
     def mousePressEvent(self, event):
@@ -146,15 +153,20 @@ class AssetSlot(QtWidgets.QWidget):
             self.manual_upload_requested.emit(self.key)
 
     def update_slot(self, exists, path):
-        """Updates the content without recreating the widget."""
+        """Updates the content without recreating the widget, smoothly fading in new images."""
         if exists:
             if self.key == "json":
+                self._current_path = None
+                self._content_opacity.setOpacity(1.0)
                 self.content_label.setPixmap(QPixmap())
                 self.content_label.setText("✓ Position Data Found")
                 self.content_label.setStyleSheet(
                     f"color: {PALETTE['success']}; font-size: 14px; font-weight: bold; background: transparent;"
                 )
             else:
+                is_new_image = self._current_path != path
+                self._current_path = path
+
                 pix = QPixmap(path)
                 if not pix.isNull():
                     # High-DPI / Wayland fractional scaling: scale at physical pixel resolution
@@ -169,9 +181,24 @@ class AssetSlot(QtWidgets.QWidget):
                     )
                     scaled_pix.setDevicePixelRatio(dpr)
                     self.content_label.setPixmap(scaled_pix)
+
                 self.content_label.setText("")
                 self.content_label.setStyleSheet("background: transparent;")
+
+                if is_new_image:
+                    self._fade_anim = QtCore.QPropertyAnimation(
+                        self._content_opacity, b"opacity", self
+                    )
+                    self._fade_anim.setDuration(300)
+                    self._fade_anim.setStartValue(0.0)
+                    self._fade_anim.setEndValue(1.0)
+                    self._fade_anim.setEasingCurve(QtCore.QEasingCurve.InOutQuad)
+                    self._fade_anim.start()
+                else:
+                    self._content_opacity.setOpacity(1.0)
         else:
+            self._current_path = None
+            self._content_opacity.setOpacity(1.0)
             self.content_label.setPixmap(QPixmap())
             self.content_label.setText("× Missing")
             self.content_label.setStyleSheet(

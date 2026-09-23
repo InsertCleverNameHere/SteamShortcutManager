@@ -4,6 +4,9 @@ import sys
 # Ensure modern protobuf works cleanly with steam.client
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 
+# Silence noisy host portal lookup warning when running uninstalled
+os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.services=false")
+
 from core.log import setup_logging
 
 setup_logging()

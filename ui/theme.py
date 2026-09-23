@@ -99,6 +99,9 @@ APP_STYLESHEET = f"""
         background-color: {PALETTE['accent_dim']};
     }}
 
+    QPushButton:focus {{
+        border: 1px solid #7cb5ec;
+    }}
 
     QPushButton:disabled {{
         background-color: {PALETTE['bg_card']};
@@ -114,6 +117,11 @@ APP_STYLESHEET = f"""
 
     QPushButton#secondary:hover {{
         background-color: {PALETTE['bg_card_hover']};
+        color: {PALETTE['text_primary']};
+    }}
+
+    QPushButton#secondary:focus {{
+        border: 1px solid {PALETTE['accent']};
         color: {PALETTE['text_primary']};
     }}
 

@@ -120,9 +120,9 @@ class ShortcutListScreen(QtWidgets.QWidget):
         header.addWidget(self.add_btn)
 
         layout.addLayout(header)
-        layout.addSpacing(10)
+        layout.addSpacing(8)
 
-        # Persistent Steam-Running Banner
+        # Persistent Steam-Running Banner (Accordion Container)
         self.running_banner = QtWidgets.QFrame()
         self.running_banner.setStyleSheet(f"""
             QFrame {{
@@ -139,17 +139,23 @@ class ShortcutListScreen(QtWidgets.QWidget):
             }}
         """)
         banner_layout = QtWidgets.QHBoxLayout(self.running_banner)
-        banner_layout.setContentsMargins(12, 6, 12, 6)
+        banner_layout.setContentsMargins(12, 4, 12, 4)
         banner_lbl = QtWidgets.QLabel(
             "⚠️ Steam is running — changes may be overwritten on exit. We recommend closing Steam."
         )
         banner_lbl.setWordWrap(True)
         banner_lbl.setAlignment(QtCore.Qt.AlignCenter)
         banner_layout.addWidget(banner_lbl)
-        self.running_banner.setVisible(False)
-        layout.addWidget(self.running_banner)
 
-        layout.addSpacing(10)
+        # Opacity effect and zero-height initial state
+        self._banner_opacity = QtWidgets.QGraphicsOpacityEffect(self.running_banner)
+        self._banner_opacity.setOpacity(0.0)
+        self.running_banner.setGraphicsEffect(self._banner_opacity)
+        self.running_banner.setMaximumHeight(0)
+        self.running_banner.setVisible(False)
+
+        layout.addWidget(self.running_banner)
+        layout.addSpacing(8)
 
         # Scroll area for shortcuts
         self.scroll_area = QtWidgets.QScrollArea()
@@ -182,6 +188,55 @@ class ShortcutListScreen(QtWidgets.QWidget):
 
         # 2. Surgical Addition: Resume and redraw once at the end
         self.list_container.setUpdatesEnabled(True)
+
+    def _animate_banner(self, show: bool):
+        """Smoothly expands or collapses the banner with parallel height and opacity animations."""
+        target_height = 36 if show else 0
+        target_opacity = 1.0 if show else 0.0
+
+        # Don't re-animate if already in the target state
+        if (
+            show
+            and self.running_banner.isVisible()
+            and self.running_banner.maximumHeight() == target_height
+        ):
+            return
+        if not show and not self.running_banner.isVisible():
+            return
+
+        if (
+            hasattr(self, "_banner_group")
+            and self._banner_group.state() == QtCore.QAbstractAnimation.Running
+        ):
+            self._banner_group.stop()
+
+        if show:
+            self.running_banner.setVisible(True)
+
+        self._banner_group = QtCore.QParallelAnimationGroup(self)
+
+        # 1. Animate Opacity
+        anim_op = QtCore.QPropertyAnimation(self._banner_opacity, b"opacity")
+        anim_op.setDuration(380)
+        anim_op.setStartValue(self._banner_opacity.opacity())
+        anim_op.setEndValue(target_opacity)
+
+        # 2. Animate Height (Smooth Accordion)
+        anim_h = QtCore.QPropertyAnimation(self.running_banner, b"maximumHeight")
+        anim_h.setDuration(380)
+        anim_h.setStartValue(self.running_banner.maximumHeight())
+        anim_h.setEndValue(target_height)
+        anim_h.setEasingCurve(QtCore.QEasingCurve.InOutQuad)
+
+        self._banner_group.addAnimation(anim_op)
+        self._banner_group.addAnimation(anim_h)
+
+        if not show:
+            self._banner_group.finished.connect(
+                lambda: self.running_banner.setVisible(False)
+            )
+
+        self._banner_group.start()
 
     def _show_sort_menu(self):
         """Builds and shows the sort options popup, anchored to the sort button."""
@@ -442,9 +497,9 @@ class ShortcutListScreen(QtWidgets.QWidget):
         display_name = user_obj.persona_name or user_obj.userdata_id
         self.title_label.setText(f"{display_name}'s Library")
 
-        # Update persistent Steam-running banner
+        # Update persistent Steam-running banner with smooth accordion transition
         is_running = bool(get_platform().is_steam_running())
-        self.running_banner.setVisible(is_running)
+        self._animate_banner(is_running)
 
         # Pre-scan the grid folder once to avoid O(N) disk hits in the loop
         grid_dir = os.path.join(os.path.dirname(user_obj.shortcuts_path), "grid")
