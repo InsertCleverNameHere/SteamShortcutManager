@@ -1,5 +1,4 @@
 import os
-from datetime import datetime
 
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtGui import QAction, QActionGroup

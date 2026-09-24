@@ -192,7 +192,9 @@ class LinuxPlatform(PlatformServices):
             clean_env.pop(var, None)
         ld_path = clean_env.get("LD_LIBRARY_PATH", "")
         if ld_path:
-            cleaned_paths = [p for p in ld_path.split(":") if not p.startswith("/tmp/.mount_")]
+            cleaned_paths = [
+                p for p in ld_path.split(":") if not p.startswith("/tmp/.mount_")
+            ]
             clean_env["LD_LIBRARY_PATH"] = ":".join(cleaned_paths)
 
         try:

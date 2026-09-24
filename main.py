@@ -43,7 +43,7 @@ def get_resource_path(relative_path):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        setup_logging() # Ensure app.log is created on startup
+        setup_logging()  # Ensure app.log is created on startup
         self.setWindowTitle("Steam Shortcut Manager")
         self.resize(800, 700)
         app_icon = get_app_icon()
@@ -134,7 +134,7 @@ class MainWindow(QMainWindow):
                 thread.wait(1500)
         AssetDetailsScreen._active_threads.clear()
 
-        event.accept()    
+        event.accept()
 
 
 if __name__ == "__main__":

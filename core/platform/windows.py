@@ -3,8 +3,8 @@ core/platform/windows.py
 Windows-specific platform services implementation.
 """
 
-import os
 import ntpath
+import os
 import subprocess
 from pathlib import Path
 

@@ -30,7 +30,11 @@ def resolve_lnk(path: str | Path) -> str | None:
         # 1. Try local base path (standard absolute Windows path)
         link_info = info.get("link_info", {})
         local_base_path = link_info.get("local_base_path")
-        if local_base_path and isinstance(local_base_path, str) and local_base_path.strip():
+        if (
+            local_base_path
+            and isinstance(local_base_path, str)
+            and local_base_path.strip()
+        ):
             return local_base_path.strip()
 
         # 2. Try relative path from string data

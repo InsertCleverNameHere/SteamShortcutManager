@@ -32,18 +32,21 @@ def is_valid_image_bytes(data: bytes, expected_ext: str) -> bool:
 
     # Immediate rejection if payload is HTML or XML text
     header_snippet = data[:64].strip().lower()
-    if header_snippet.startswith((b"<!doctype", b"<html", b"<?xml", b"<head", b"<body")):
+    if header_snippet.startswith(
+        (b"<!doctype", b"<html", b"<?xml", b"<head", b"<body")
+    ):
         return False
 
     ext = expected_ext.lower()
     if ext in (".jpg", ".jpeg"):
-        return data.startswith(b"\xFF\xD8\xFF")
+        return data.startswith(b"\xff\xd8\xff")
     if ext == ".png":
         return data.startswith(b"\x89PNG\r\n\x1a\n")
     if ext == ".ico":
         return data.startswith(b"\x00\x00\x01\x00")
 
     return True
+
 
 def search_steam_apps(query: str):
     """
@@ -73,7 +76,13 @@ def search_steam_apps(query: str):
                 "thumb_url": item.get("tiny_image"),
             }
         return None  # No results found (successfully queried)
-    except (requests.RequestException, ValueError, KeyError, IndexError, TypeError) as e:
+    except (
+        requests.RequestException,
+        ValueError,
+        KeyError,
+        IndexError,
+        TypeError,
+    ) as e:
         logger.warning(f"Steam Store Search error: {e}")
         return "ERR_NETWORK"  # Specific error indicator
 
@@ -250,7 +259,9 @@ def download_assets(
                     res = requests.get(url, timeout=_ASSET_REQUEST_TIMEOUT)
                     if res.status_code == 200:
                         if not is_valid_image_bytes(res.content, ext):
-                            report(f"⚠️ {display_name}: downloaded content was not a valid image")
+                            report(
+                                f"⚠️ {display_name}: downloaded content was not a valid image"
+                            )
                             break
                         with open(local_path, "wb") as f:
                             f.write(res.content)
@@ -290,7 +301,9 @@ def download_assets(
                         res = requests.get(icon_url, timeout=_ASSET_REQUEST_TIMEOUT)
                         if res.status_code == 200:
                             if not is_valid_image_bytes(res.content, ".ico"):
-                                report("⚠️ icon: downloaded content was not a valid icon")
+                                report(
+                                    "⚠️ icon: downloaded content was not a valid icon"
+                                )
                                 break
                             with open(local_icon_path, "wb") as f:
                                 f.write(res.content)
@@ -331,11 +344,15 @@ def download_assets(
                 downloaded_count += 1
 
         # Must have downloaded at least one visual asset to report overall success
-        if downloaded_count == 0 or (downloaded_count == 1 and os.path.exists(json_path) and not any(
-            os.path.exists(os.path.join(grid_dir, f"{local_appid}{sfx}{ext}"))
-            for sfx in ("p", "", "_hero", "_logo", "_icon")
-            for ext in (".jpg", ".png", ".jpeg", ".ico")
-        )):
+        if downloaded_count == 0 or (
+            downloaded_count == 1
+            and os.path.exists(json_path)
+            and not any(
+                os.path.exists(os.path.join(grid_dir, f"{local_appid}{sfx}{ext}"))
+                for sfx in ("p", "", "_hero", "_logo", "_icon")
+                for ext in (".jpg", ".png", ".jpeg", ".ico")
+            )
+        ):
             return False, "❌ No artwork could be downloaded from Steam for this game."
 
         return True, f"✅ Successfully injected {downloaded_count} assets."

@@ -7,9 +7,9 @@ Logs to OS-standard app data/log directories with console mirroring in dev.
 import logging
 import os
 import sys
+import tempfile
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-import tempfile
 
 LOGGER_NAME = "ssm"
 _log_file_path: Path | None = None
@@ -62,7 +62,10 @@ def setup_logging(level: int = logging.DEBUG) -> Path:
     )
 
     # 1. Console handler (only attach if sys.stdout is available, preventing windowed crashes)
-    has_console = any(isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler) for h in logger.handlers)
+    has_console = any(
+        isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler)
+        for h in logger.handlers
+    )
     if not has_console and sys.stdout is not None:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(level)
@@ -91,7 +94,9 @@ def setup_logging(level: int = logging.DEBUG) -> Path:
         except OSError:
             # Fall back to OS temp directory if state dir is unwritable
             try:
-                fallback_log = Path(tempfile.gettempdir()) / "steam-shortcut-manager-app.log"
+                fallback_log = (
+                    Path(tempfile.gettempdir()) / "steam-shortcut-manager-app.log"
+                )
                 file_handler = RotatingFileHandler(
                     str(fallback_log),
                     maxBytes=1_000_000,

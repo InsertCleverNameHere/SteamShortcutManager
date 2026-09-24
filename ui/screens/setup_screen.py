@@ -2,6 +2,7 @@
 Setup screen — shown when Steam cannot be found at a default path.
 The user browses to their Steam installation directory.
 """
+
 import os
 
 from PySide6 import QtWidgets

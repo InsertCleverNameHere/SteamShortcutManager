@@ -185,7 +185,10 @@ class ShortcutsTransaction:
         if self.shortcuts_path.is_file() and self._initial_mtime_ns is not None:
             try:
                 current_stat = self.shortcuts_path.stat()
-                if (current_stat.st_mtime_ns != self._initial_mtime_ns or current_stat.st_size != self._initial_size):
+                if (
+                    current_stat.st_mtime_ns != self._initial_mtime_ns
+                    or current_stat.st_size != self._initial_size
+                ):
                     external_data = load_shortcuts(self.shortcuts_path, strict=True)
                     for k, v in external_data.get("shortcuts", {}).items():
                         if k not in self.data.get("shortcuts", {}):
