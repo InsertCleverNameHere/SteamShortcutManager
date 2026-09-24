@@ -181,20 +181,27 @@ class AssetSlot(QtWidgets.QWidget):
                     )
                     scaled_pix.setDevicePixelRatio(dpr)
                     self.content_label.setPixmap(scaled_pix)
+                    self.content_label.setText("")
+                    self.content_label.setStyleSheet("background: transparent;")
 
-                self.content_label.setText("")
-                self.content_label.setStyleSheet("background: transparent;")
-
-                if is_new_image:
-                    self._fade_anim = QtCore.QPropertyAnimation(
-                        self._content_opacity, b"opacity", self
-                    )
-                    self._fade_anim.setDuration(300)
-                    self._fade_anim.setStartValue(0.0)
-                    self._fade_anim.setEndValue(1.0)
-                    self._fade_anim.setEasingCurve(QtCore.QEasingCurve.InOutQuad)
-                    self._fade_anim.start()
+                    if is_new_image:
+                        self._fade_anim = QtCore.QPropertyAnimation(
+                            self._content_opacity, b"opacity", self
+                        )
+                        self._fade_anim.setDuration(300)
+                        self._fade_anim.setStartValue(0.0)
+                        self._fade_anim.setEndValue(1.0)
+                        self._fade_anim.setEasingCurve(QtCore.QEasingCurve.InOutQuad)
+                        self._fade_anim.start()
+                    else:
+                        self._content_opacity.setOpacity(1.0)
                 else:
+                    # Clear previous game's pixmap and display unreadable status
+                    self.content_label.setPixmap(QPixmap())
+                    self.content_label.setText("⚠ Unreadable Image")
+                    self.content_label.setStyleSheet(
+                        f"color: {PALETTE['warning']}; font-size: 14px; font-weight: bold; background: transparent;"
+                    )
                     self._content_opacity.setOpacity(1.0)
         else:
             self._current_path = None
@@ -352,7 +359,9 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             f"color: {PALETTE['text_primary']}; font-size: 11px; font-weight: bold; margin-left: 10px;"
         )
         self.status_label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-        self.status_label.setFixedWidth(200)
+        # Avoid hardcoded 200px constraint that clips long error messages
+        self.status_label.setMinimumWidth(180)
+        self.status_label.setMaximumWidth(320)
         toolbox_row.addWidget(self.status_label)
 
         self.force_cb = QtWidgets.QCheckBox("Force Overwrite")
@@ -860,9 +869,9 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             # 4. Asset File Cleanup
             if clean_assets == QtWidgets.QMessageBox.Yes:
                 grid_dir = os.path.join(os.path.dirname(vdf_path), "grid")
-                # Clean all artwork and icon patterns ({appid}p.jpg, {appid}_icon.ico, etc.)
+                # Clean all artwork and icon patterns including .jpeg
                 for suffix in ["p", "", "_hero", "_logo", "_icon"]:
-                    for ext in [".jpg", ".png", ".json", ".ico"]:
+                    for ext in [".jpg", ".png", ".jpeg", ".json", ".ico"]:
                         target_file = os.path.join(
                             grid_dir, f"{self._current_appid}{suffix}{ext}"
                         )
@@ -871,7 +880,6 @@ class AssetDetailsScreen(QtWidgets.QWidget):
                                 os.remove(target_file)
                             except Exception as e:
                                 logger.warning(f"Could not delete {target_file}: {e}")
-
             # 5. Finalize and Exit
             self.name_changed.emit()  # Refresh the main list
             self.back_requested.emit()  # Go back to the list automatically
@@ -907,6 +915,9 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         dest_path = os.path.join(grid_dir, new_filename)
 
         try:
+            # Ensure grid directory exists on fresh profiles before copying
+            os.makedirs(grid_dir, exist_ok=True)
+
             # Delete existing assets with other file extensions
             for existing_ext in [".jpg", ".png", ".jpeg"]:
                 potential_old_file = os.path.join(
@@ -918,6 +929,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
                         os.remove(potential_old_file)
                     except Exception as e:
                         logger.warning(f"Could not remove old asset: {e}")
+
             # 3. Copy and Overwrite
             shutil.copy2(file_path, dest_path)
 

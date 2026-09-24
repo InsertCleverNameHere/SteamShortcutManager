@@ -65,7 +65,9 @@ class LinuxPlatform(PlatformServices):
         return results
 
     def is_valid_steam_dir(self, path: Path | str) -> bool:
-        p = Path(path)
+        # Expand user tilde (~) and environment variables
+        expanded = os.path.expanduser(os.path.expandvars(str(path)))
+        p = Path(expanded)
         if not p.is_dir():
             return False
         # On Linux, userdata/ is the universal indicator
@@ -184,9 +186,19 @@ class LinuxPlatform(PlatformServices):
             else ["steam", "-shutdown"]
         )
 
+        # Sanitize environment: strip AppImage runtime variables before launching subprocesses
+        clean_env = os.environ.copy()
+        for var in ("PYTHONHOME", "PYTHONPATH", "APPIMAGE", "APPDIR"):
+            clean_env.pop(var, None)
+        ld_path = clean_env.get("LD_LIBRARY_PATH", "")
+        if ld_path:
+            cleaned_paths = [p for p in ld_path.split(":") if not p.startswith("/tmp/.mount_")]
+            clean_env["LD_LIBRARY_PATH"] = ":".join(cleaned_paths)
+
         try:
             subprocess.run(
                 cmd,
+                env=clean_env,
                 check=False,
                 timeout=5,
                 stdout=subprocess.DEVNULL,

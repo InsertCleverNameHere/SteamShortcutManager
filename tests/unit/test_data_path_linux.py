@@ -8,7 +8,7 @@ from core.shortcuts_io import add_shortcut
 
 def test_linux_data_path_formatting(tmp_path: Path):
     """
-    Verify Plan §2.4 Linux data path rules:
+    Verify Linux data path rules:
     - Exe: Linux-visible path in double quotes
     - StartDir: Directory with trailing slash, unquoted
     - icon: Empty by default

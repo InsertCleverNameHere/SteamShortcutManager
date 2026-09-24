@@ -123,14 +123,17 @@ def find_shortcuts(steam_dir: str | Path | SteamInstall) -> list[SteamUserShortc
         if not entry.isdigit() or entry == "0":
             continue
 
-        shortcuts_path = userdata_root / entry / "config" / "shortcuts.vdf"
-        if not shortcuts_path.is_file():
+        user_dir = userdata_root / entry
+        if not user_dir.is_dir():
             continue
+
+        shortcuts_path = user_dir / "config" / "shortcuts.vdf"
+        # If shortcuts.vdf does not exist yet (fresh profile), count is 0
+        count = count_shortcuts(str(shortcuts_path)) if shortcuts_path.is_file() else 0
 
         steamid64 = userdata_id_to_steamid64(entry)
         persona = get_persona_name(str(root_path), steamid64)
         avatar = get_avatar_path(str(root_path), steamid64)
-        count = count_shortcuts(str(shortcuts_path))
 
         results.append(
             SteamUserShortcuts(

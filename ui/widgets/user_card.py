@@ -97,6 +97,7 @@ class UserCard(QtWidgets.QFrame):
         self._user = user
         self._is_selected = False
         self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)  # Keyboard Tab navigation support
         self.setStyleSheet(_CARD_BASE)
         self._build_ui()
 
@@ -208,3 +209,11 @@ class UserCard(QtWidgets.QFrame):
     def leaveEvent(self, event):
         if not self._is_selected:
             self.setStyleSheet(_CARD_BASE)
+
+    def keyPressEvent(self, event):
+        """Allows activating the card with Enter, Return, or Space bar via keyboard."""
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space):
+            self.selected.emit(self._user)
+            event.accept()
+            return
+        super().keyPressEvent(event)

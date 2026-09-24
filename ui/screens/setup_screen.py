@@ -2,6 +2,7 @@
 Setup screen — shown when Steam cannot be found at a default path.
 The user browses to their Steam installation directory.
 """
+import os
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
@@ -14,10 +15,11 @@ from ui.theme import PALETTE, get_icon
 class SetupScreen(QtWidgets.QWidget):
     """
     Emits `steam_dir_confirmed(path: str)` when the user provides
-    a valid Steam directory.
+    a valid Steam directory, or `cancel_requested()` when cancelled.
     """
 
     steam_dir_confirmed = Signal(str)
+    cancel_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -97,12 +99,24 @@ class SetupScreen(QtWidgets.QWidget):
 
         col.addSpacing(24)
 
-        # ── confirm button ───────────────────────────────────────────────────
+        # ── action row (Cancel & Confirm buttons) ─────────────────────────────
+        action_row = QtWidgets.QHBoxLayout()
+        action_row.setSpacing(12)
+        action_row.setAlignment(Qt.AlignCenter)
+
+        self._cancel_btn = QtWidgets.QPushButton("Cancel")
+        self._cancel_btn.setObjectName("secondary")
+        self._cancel_btn.setFixedWidth(100)
+        self._cancel_btn.clicked.connect(self.cancel_requested.emit)
+        action_row.addWidget(self._cancel_btn)
+
         self._confirm_btn = QtWidgets.QPushButton("Confirm")
-        self._confirm_btn.setFixedWidth(180)
+        self._confirm_btn.setFixedWidth(140)
         self._confirm_btn.setEnabled(False)
         self._confirm_btn.clicked.connect(self._confirm)
-        col.addWidget(self._confirm_btn, alignment=Qt.AlignCenter)
+        action_row.addWidget(self._confirm_btn)
+
+        col.addLayout(action_row)
 
         root.addWidget(centre)
 
@@ -124,7 +138,7 @@ class SetupScreen(QtWidgets.QWidget):
             self._error_label.setText("")
 
     def _confirm(self):
-        path = self._path_edit.text().strip()
+        path = os.path.expanduser(self._path_edit.text().strip())
         if is_valid_steam_dir(path):
             self.steam_dir_confirmed.emit(path)
 

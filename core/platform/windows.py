@@ -3,6 +3,7 @@ core/platform/windows.py
 Windows-specific platform services implementation.
 """
 
+import os
 import ntpath
 import subprocess
 from pathlib import Path
@@ -73,7 +74,9 @@ class WindowsPlatform(PlatformServices):
         return results
 
     def is_valid_steam_dir(self, path: Path | str) -> bool:
-        p = Path(path)
+        # Expand user paths (~), slashes, and Windows environment variables (%PROGRAMFILES%)
+        expanded = os.path.expanduser(os.path.expandvars(str(path)))
+        p = Path(expanded)
         if not p.is_dir():
             return False
         has_exe = (p / "steam.exe").is_file()

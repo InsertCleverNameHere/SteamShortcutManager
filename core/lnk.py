@@ -9,15 +9,18 @@ from pathlib import Path
 import LnkParse3
 
 
-def resolve_lnk(path: str | Path) -> str:
+def resolve_lnk(path: str | Path) -> str | None:
     """
     If the path is a .lnk file, inspects its binary structure and returns
-    the target executable path. Falls back to returning the original path
-    if it cannot be parsed or resolved.
+    the target executable path. If unresolvable or corrupted, returns None
+    so the broken .lnk is not stored as an executable.
     """
     file_path = Path(path)
-    if file_path.suffix.lower() != ".lnk" or not file_path.is_file():
+    if file_path.suffix.lower() != ".lnk":
         return str(path)
+
+    if not file_path.is_file():
+        return None
 
     try:
         with open(file_path, "rb") as f:
@@ -27,11 +30,7 @@ def resolve_lnk(path: str | Path) -> str:
         # 1. Try local base path (standard absolute Windows path)
         link_info = info.get("link_info", {})
         local_base_path = link_info.get("local_base_path")
-        if (
-            local_base_path
-            and isinstance(local_base_path, str)
-            and local_base_path.strip()
-        ):
+        if local_base_path and isinstance(local_base_path, str) and local_base_path.strip():
             return local_base_path.strip()
 
         # 2. Try relative path from string data
@@ -49,7 +48,7 @@ def resolve_lnk(path: str | Path) -> str:
     except Exception:
         pass
 
-    return str(path)
+    return None
 
 
 # Backward-compatibility alias matching the old utils_win naming

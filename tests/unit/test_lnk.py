@@ -12,13 +12,13 @@ def test_resolve_lnk_returns_path_if_not_lnk(tmp_path: Path):
 
 def test_resolve_lnk_handles_missing_file():
     missing = Path("/nonexistent/path/game.lnk")
-    assert resolve_lnk(missing) == str(missing)
+    assert resolve_lnk(missing) is None
 
 
 def test_resolve_lnk_handles_corrupt_lnk(tmp_path: Path):
     corrupt_lnk = tmp_path / "broken.lnk"
     corrupt_lnk.write_bytes(b"INVALID_LNK_DATA")
-    assert resolve_lnk(corrupt_lnk) == str(corrupt_lnk)
+    assert resolve_lnk(corrupt_lnk) is None
 
 
 def test_resolve_lnk_extracts_local_base_path(tmp_path: Path):
