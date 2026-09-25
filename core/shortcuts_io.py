@@ -71,7 +71,7 @@ def create_backup(shortcuts_path: str | Path, max_backups: int = 10) -> Path | N
     backup_path = backup_dir / f"shortcuts_{timestamp}.vdf.bak"
     shutil.copy2(src, backup_path)
 
-    # Ensure backup modification time reflects creation time, not source mtime (F02)
+    # Ensure backup modification time reflects creation time, not source mtime
     try:
         os.utime(backup_path, None)
     except OSError:
@@ -236,7 +236,7 @@ def get_available_backups(shortcuts_path: str | Path) -> list[Path]:
 def restore_backup(backup_path: str | Path, target_path: str | Path) -> bool:
     """
     Restores a selected backup file over target_path atomically.
-    Takes a pre-restore safety snapshot of the current state first (F03).
+    Takes a pre-restore safety snapshot of the current state first.
     """
     src = Path(backup_path)
     dst = Path(target_path)

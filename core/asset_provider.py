@@ -1,375 +1,268 @@
-import json
+"""
+core/asset_provider.py
+Streamlined artwork and icon injection provider.
+Orchestrates isolated Steam PICS child process queries, robust CDN downloads,
+and atomic grid filesystem operations without in-process gevent or SteamClient.
+"""
+
 import os
 import threading
-import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import requests
-from steam.client import SteamClient
 
+from core.grid import (
+    SLOT_MAPPING,
+    get_asset_status,
+    validate_image_bytes,
+    write_asset_atomic,
+    write_json_positioning,
+)
 from core.log import get_logger
+from core.net import (
+    DEFAULT_TIMEOUT,
+    create_steam_session,
+    is_network_available,
+    is_trusted_steam_url,
+    search_steam_store,
+)
+from core.steam_fetch import (
+    SteamAppNotFoundError,
+    SteamFetchError,
+    SteamFetchTimeoutError,
+    fetch_product_info,
+)
+from ui.tasks import CancelToken, TaskCancelledError
 
 logger = get_logger("asset_provider")
 
-# Base URLs for Steam's official assets
+# Base URLs for Steam's official CDN assets
 CDN_BASE = "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps"
 COMMUNITY_ICON_BASE = (
     "https://shared.fastly.steamstatic.com/community_assets/images/apps"
 )
 
-# Timeouts
-_ASSET_REQUEST_TIMEOUT = (
-    8  # seconds per CDN image download (was 15 — 2 retries × 15s = 30s lag)
-)
-_STEAM_CLIENT_TIMEOUT = (
-    30  # seconds for the entire SteamClient phase (login + product info)
-)
 
-
+# Backward-compatibility alias for tests and existing callers
 def is_valid_image_bytes(data: bytes, expected_ext: str) -> bool:
-    """Validates header magic bytes to prevent writing HTML or corrupt payloads into image files (Plan §4.1 / F15)."""
-    if len(data) < 8:
-        return False
-
-    # Immediate rejection if payload is HTML or XML text
-    header_snippet = data[:64].strip().lower()
-    if header_snippet.startswith(
-        (b"<!doctype", b"<html", b"<?xml", b"<head", b"<body")
-    ):
-        return False
-
-    ext = expected_ext.lower()
-    if ext in (".jpg", ".jpeg"):
-        return data.startswith(b"\xff\xd8\xff")
-    if ext == ".png":
-        return data.startswith(b"\x89PNG\r\n\x1a\n")
-    if ext == ".ico":
-        return data.startswith(b"\x00\x00\x01\x00")
-
-    return True
+    return validate_image_bytes(data, expected_ext)
 
 
-def search_steam_apps(query: str):
+def is_internet_reachable(timeout: float = 3.0) -> bool:
+    return is_network_available(timeout)
+
+
+def search_steam_apps(query: str) -> dict[str, Any] | str | None:
     """
-    Queries Steam Store search to find a potential match for the name.
-    Returns a dict with id, name, and thumbnail URL or None.
+    Backward-compatible wrapper for search_steam_store.
+    Returns dict with id, name, thumb_url on match, None on no match,
+    or 'ERR_NETWORK' on error.
     """
-    # Clean query: Replace hyphens/colons with spaces to help Steam's literal API
-    clean_query = query.replace("-", " ").replace(":", " ")
-    url = "https://store.steampowered.com/api/storesearch/"
-    params = {
-        "term": clean_query,
-        "l": "english",
-        "cc": "US",
-    }
-    try:
-        # Use params for safe RFC 3986 URL encoding of '&', '#', '+', etc.
-        r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        items = data.get("items", [])
-        # Guard against total > 0 when items list is empty
-        if data.get("total", 0) > 0 and items and len(items) > 0:
-            item = items[0]
-            return {
-                "id": str(item.get("id")),
-                "name": item.get("name"),
-                "thumb_url": item.get("tiny_image"),
-            }
-        return None  # No results found (successfully queried)
-    except (
-        requests.RequestException,
-        ValueError,
-        KeyError,
-        IndexError,
-        TypeError,
-    ) as e:
-        logger.warning(f"Steam Store Search error: {e}")
-        return "ERR_NETWORK"  # Specific error indicator
-
-
-def is_internet_reachable(timeout=3):
-    """Checks if Steam network endpoints are reachable via standard HTTPS."""
-    try:
-        r = requests.head("https://store.steampowered.com", timeout=timeout)
-        return r.status_code < 500
-    except Exception:
-        return False
+    res = search_steam_store(query)
+    if res.status == "ok" and res.item:
+        return {
+            "id": res.item.appid,
+            "name": res.item.name,
+            "thumb_url": res.item.thumb_url,
+        }
+    elif res.status == "error":
+        return "ERR_NETWORK"
+    return None
 
 
 def download_assets(
-    steam_appid: str,
-    local_appid: str,
-    grid_dir: str,
+    steam_appid: str | int,
+    local_appid: str | int,
+    grid_dir: str | Path,
     force: bool = False,
-    status_callback=None,
-    abort_event: threading.Event | None = None,
+    status_callback: Callable[[str], None] | None = None,
+    abort_event: threading.Event | CancelToken | None = None,
     client_holder: list | None = None,
-):
+) -> tuple[bool, str]:
     """
-    Fetches metadata and downloads Steam Grid assets.
+    Fetches official Steam grid assets, icon, and logo positioning.
 
     Args:
-        steam_appid:     Real Steam AppID to look up.
-        local_appid:     Local/non-Steam AppID used for file naming.
-        grid_dir:        Path to the user's Steam grid folder.
-        force:           If True, overwrite existing assets.
-        status_callback: Optional callable(str) for live progress messages.
-        abort_event:     threading.Event; set externally to cancel the operation.
-                         When set, download_assets returns (False, "❌ Cancelled.").
-        client_holder:   Single-element list populated with the live SteamClient so
-                         the caller can call disconnect() to unblock a hanging network
-                         call (e.g. from an abort button or a watchdog).
+        steam_appid: Real Steam AppID.
+        local_appid: Local shortcut AppID for grid filenames.
+        grid_dir: Path to Steam userdata grid folder.
+        force: Overwrite existing assets if True.
+        status_callback: Live progress callback(str).
+        abort_event: CancelToken or threading.Event to signal cancellation.
+        client_holder: Deprecated compatibility list (set to None).
+
+    Returns:
+        (success: bool, message: str)
     """
 
     def report(msg: str) -> None:
         if status_callback:
             status_callback(msg)
 
-    def is_aborted() -> bool:
-        return bool(abort_event and abort_event.is_set())
+    # Adapt CancelToken or threading.Event
+    if isinstance(abort_event, CancelToken):
+        token = abort_event
+    else:
+        token = CancelToken()
+        if isinstance(abort_event, threading.Event):
+            token._event = abort_event
 
-    client = None
-    timed_out = False
+    if client_holder is not None:
+        client_holder[0] = None
 
-    def watchdog() -> None:
-        """
-        Called by the timer thread when _STEAM_CLIENT_TIMEOUT elapses.
-        Disconnects the SteamClient so any blocking call raises immediately.
-        """
-        nonlocal timed_out
-        timed_out = True
-        if client is not None:
-            try:
-                client.disconnect()
-            except Exception:
-                pass
+    if token.is_cancelled:
+        return False, "❌ Cancelled."
 
-    # One timer covers the entire SteamClient phase (login + product info).
-    # It is only cancelled after client.disconnect() below, once we no longer need it.
-    timer = threading.Timer(_STEAM_CLIENT_TIMEOUT, watchdog)
-    timer.start()
+    if not is_network_available():
+        return False, "❌ No internet connection detected."
 
+    # 1. Fetch metadata in isolated child process (B2)
+    report("🌐 [1/4] Connecting to Steam...")
     try:
-        if is_aborted():
-            return False, "❌ Cancelled."
-
-        if not is_internet_reachable():
-            return False, "❌ No internet connection detected."
-
-        report("🌐 [1/4] Connecting to Steam...")
-
-        try:
-            client = SteamClient()
-            if client_holder is not None:
-                client_holder[0] = client  # Expose client for external abort
-            login_result = client.anonymous_login()
-        except Exception as e:
-            if timed_out:
-                return False, "❌ Connection timed out (Steam servers may be slow)."
-            if is_aborted():
-                return False, "❌ Cancelled"
-            return False, f"❌ Steam API Error: {e!s}"
-
-        if timed_out:
-            return False, "❌ Operation aborted."
-        if is_aborted():
-            return False, "❌ Cancelled"
-        if not client or login_result != 1:
-            return False, "❌ Connection failed."
-
-        report("📑 [2/4] Fetching manifest...")
-        try:
-            # AppIDs must be integers for the steam library lookup
-            product_info = client.get_product_info(apps=[int(steam_appid)])
-        except BaseException as e:
-            if timed_out:
-                return (
-                    False,
-                    "❌ Timed out fetching app metadata. Check your connection.",
-                )
-            if is_aborted():
-                return False, "❌ Cancelled."
-            return False, f"❌ Connection lost during manifest fetch: {e!s}"
-
-        if timed_out:
-            return False, "❌ Timed out fetching app metadata. Check your connection."
-        if is_aborted():
-            return False, "❌ Cancelled."
-
-        # SteamClient work is done — cancel the watchdog and cleanly disconnect.
-        timer.cancel()
-        try:
-            client.disconnect()
-        except Exception:
-            pass
-        client = None
-        if client_holder is not None:
-            client_holder[0] = None
-
-        # Guard against None return on client timeout or network dropout
-        if not product_info or not isinstance(product_info, dict):
-            return False, "❌ Timed out fetching app metadata. Check your connection."
-
-        app_data = product_info.get("apps", {}).get(int(steam_appid))
-        if not app_data:
-            return False, "❌ AppID not found on Steam."
-
-        common = app_data.get("common", {})
-        assets_full = common.get("library_assets_full", {})
-        assets_meta = common.get("library_assets", {})
-
-        mapping = {
-            "p": ("library_capsule", "library_600x900.jpg"),
-            "": ("library_header", "header.jpg"),
-            "_hero": ("library_hero", "library_hero.jpg"),
-            "_logo": ("library_logo", "logo.png"),
-        }
-
-        downloaded_count = 0
-        os.makedirs(grid_dir, exist_ok=True)
-        for suffix, (key, default_name) in mapping.items():
-            if is_aborted():
-                return False, "❌ Cancelled"
-
-            asset_entry = assets_full.get(key, {})
-            img_hash_path = asset_entry.get("image", {}).get("english")
-
-            if img_hash_path:
-                # Sanitize path while keeping the hash subfolder intact
-                clean_path = img_hash_path.lstrip("/").replace("\\", "/")
-                url = f"{CDN_BASE}/{steam_appid}/{clean_path}"
-            else:
-                url = f"{CDN_BASE}/{steam_appid}/{default_name}"
-
-            ext = os.path.splitext(url)[1] or ".jpg"
-            local_filename = f"{local_appid}{suffix}{ext}"
-            local_path = os.path.join(grid_dir, local_filename)
-
-            # --- FORCE LOGIC: Skip if file exists and we aren't forcing ---
-            if not force and os.path.exists(local_path):
-                continue
-
-            display_name = key.replace("library_", "") or "header"
-            report(f"📥 [3/4] Downloading {key.replace('library_', '')}...")
-            download_success = False
-            for attempt in range(2):
-                if is_aborted():
-                    return False, "❌ Cancelled"
-                try:
-                    res = requests.get(url, timeout=_ASSET_REQUEST_TIMEOUT)
-                    if res.status_code == 200:
-                        if not is_valid_image_bytes(res.content, ext):
-                            report(
-                                f"⚠️ {display_name}: downloaded content was not a valid image"
-                            )
-                            break
-                        with open(local_path, "wb") as f:
-                            f.write(res.content)
-                        downloaded_count += 1
-                        download_success = True
-                        break  # Exit retry loop on success
-                except requests.exceptions.Timeout:
-                    suffix_msg = "retrying..." if attempt == 0 else "skipping"
-                    report(f"⚠️ {display_name} timed out — {suffix_msg}")
-                except requests.exceptions.RequestException:
-                    pass  # Let it retry or fail gracefully
-
-                if (
-                    attempt == 0 and not is_aborted()
-                ):  # If first attempt failed, wait briefly
-                    time.sleep(1)
-
-            if not download_success:
-                report(f"⚠️ Skipping {display_name}: download failed after 2 attempts")
-
-        if is_aborted():
-            return False, "❌ Cancelled."
-
-        # Handle official client icon (.ico) from Fastly Community CDN
-        client_icon_hash = common.get("clienticon") or common.get("icon")
-        if client_icon_hash and not is_aborted():
-            icon_url = f"{COMMUNITY_ICON_BASE}/{steam_appid}/{client_icon_hash}.ico"
-            local_icon_path = os.path.join(grid_dir, f"{local_appid}_icon.ico")
-
-            if force or not os.path.exists(local_icon_path):
-                report("📥 [3/4] Downloading icon...")
-                download_success = False
-                for attempt in range(2):
-                    if is_aborted():
-                        return False, "❌ Cancelled"
-                    try:
-                        res = requests.get(icon_url, timeout=_ASSET_REQUEST_TIMEOUT)
-                        if res.status_code == 200:
-                            if not is_valid_image_bytes(res.content, ".ico"):
-                                report(
-                                    "⚠️ icon: downloaded content was not a valid icon"
-                                )
-                                break
-                            with open(local_icon_path, "wb") as f:
-                                f.write(res.content)
-                            downloaded_count += 1
-                            download_success = True
-                            break
-                    except requests.exceptions.Timeout:
-                        suffix_msg = "retrying..." if attempt == 0 else "skipping"
-                        report(f"⚠️ icon timed out — {suffix_msg}")
-                    except requests.exceptions.RequestException:
-                        pass
-
-                    if attempt == 0 and not is_aborted():
-                        time.sleep(1)
-
-                if not download_success:
-                    report("⚠️ Skipping icon: download failed after 2 attempts")
-
-        if is_aborted():
-            return False, "❌ Cancelled."
-
-        # Handle JSON positioning
-        json_path = os.path.join(grid_dir, f"{local_appid}.json")
-        if force or not os.path.exists(json_path):
-            report("📝 [4/4] Generating JSON...")
-            logo_pos = assets_meta.get("logo_position")
-            if logo_pos:
-                json_data = {
-                    "nVersion": 1,
-                    "logoPosition": {
-                        "pinnedPosition": logo_pos.get("pinned_position", "BottomLeft"),
-                        "nWidthPct": float(logo_pos.get("width_pct", 50)),
-                        "nHeightPct": float(logo_pos.get("height_pct", 50)),
-                    },
-                }
-                with open(json_path, "w") as f:
-                    json.dump(json_data, f, separators=(",", ":"))
-                downloaded_count += 1
-
-        # Must have downloaded at least one visual asset to report overall success
-        if downloaded_count == 0 or (
-            downloaded_count == 1
-            and os.path.exists(json_path)
-            and not any(
-                os.path.exists(os.path.join(grid_dir, f"{local_appid}{sfx}{ext}"))
-                for sfx in ("p", "", "_hero", "_logo", "_icon")
-                for ext in (".jpg", ".png", ".jpeg", ".ico")
-            )
-        ):
-            return False, "❌ No artwork could be downloaded from Steam for this game."
-
-        return True, f"✅ Successfully injected {downloaded_count} assets."
-
+        product_info = fetch_product_info(
+            steam_appid,
+            token=token,
+            status_callback=lambda s: report(f"📑 {s}"),
+            timeout=30.0,
+        )
+    except TaskCancelledError:
+        return False, "❌ Cancelled."
+    except SteamFetchTimeoutError:
+        return False, "❌ Connection timed out (Steam servers may be slow)."
+    except SteamAppNotFoundError:
+        return False, f"❌ AppID {steam_appid} not found on Steam."
+    except SteamFetchError as e:
+        return False, f"❌ Steam metadata error: {e}"
     except Exception as e:
-        if is_aborted():
+        logger.exception(f"Unexpected metadata fetch error: {e}")
+        return False, f"❌ Failed to fetch Steam metadata: {e}"
+
+    if token.is_cancelled:
+        return False, "❌ Cancelled."
+
+    assets_full = product_info.get("library_assets_full", {})
+    assets_meta = product_info.get("library_assets", {})
+    client_icon_hash = product_info.get("clienticon", "")
+    appid_str = str(local_appid)
+    steam_id_str = str(steam_appid)
+
+    session = create_steam_session()
+    # Hook instant socket abort upon token cancellation
+    token.register_callback(session.close)
+
+    downloaded_count = 0
+    existing_status = get_asset_status(grid_dir, appid_str)
+
+    # 2. Download visual artwork slots (Capsule, Header, Hero, Logo)
+    for slot_name, (suffix, default_name) in SLOT_MAPPING.items():
+        if token.is_cancelled:
             return False, "❌ Cancelled."
-        if timed_out:
-            return False, "❌ Operation timed out. Check your connection and try again."
-        logger.exception(f"Global Download Error: {e}")
-        return False, f"❌ Download error: {e!s}"
-    finally:
-        timer.cancel()
-        if client is not None:
-            try:
-                client.disconnect()
-            except Exception:
-                pass
-        if client_holder is not None:
-            client_holder[0] = None
+
+        # If not forcing, skip slots that already have a valid asset
+        if not force and existing_status.get(slot_name, (False,))[0]:
+            continue
+
+        asset_entry = assets_full.get(f"library_{slot_name}", {})
+        img_hash_path = asset_entry.get("image", {}).get("english")
+
+        if img_hash_path:
+            clean_path = img_hash_path.lstrip("/").replace("\\", "/")
+            url = f"{CDN_BASE}/{steam_id_str}/{clean_path}"
+        else:
+            url = f"{CDN_BASE}/{steam_id_str}/{default_name}"
+
+        if not is_trusted_steam_url(url):
+            logger.warning(f"Blocked untrusted CDN URL: {url}")
+            continue
+
+        ext = os.path.splitext(url)[1].lower() or ".jpg"
+        display_name = slot_name.capitalize()
+        report(f"📥 [2/4] Downloading {display_name}...")
+
+        try:
+            resp = session.get(url, timeout=DEFAULT_TIMEOUT, stream=True)
+            if resp.status_code == 200:
+                write_asset_atomic(grid_dir, appid_str, suffix, ext, resp.content)
+                downloaded_count += 1
+            elif resp.status_code == 404:
+                report(f"⚠️ {display_name} not available on Steam.")
+            else:
+                report(f"⚠️ {display_name} download error: HTTP {resp.status_code}")
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            if token.is_cancelled:
+                return False, "❌ Cancelled."
+            logger.warning(f"Network failure while downloading {display_name}: {e}")
+            return (
+                False,
+                f"❌ Network connection lost or timed out while downloading {display_name}. Please check your connection.",
+            )
+        except Exception as e:
+            if token.is_cancelled:
+                return False, "❌ Cancelled."
+            logger.warning(f"Failed downloading {display_name} from {url}: {e}")
+            report(f"⚠️ Failed downloading {display_name}: {e}")
+
+    if token.is_cancelled:
+        return False, "❌ Cancelled."
+
+    # 3. Download official client icon (.ico)
+    if client_icon_hash:
+        if force or not existing_status.get("icon", (False,))[0]:
+            icon_url = f"{COMMUNITY_ICON_BASE}/{steam_id_str}/{client_icon_hash}.ico"
+            if is_trusted_steam_url(icon_url):
+                report("📥 [3/4] Downloading icon...")
+                try:
+                    resp = session.get(icon_url, timeout=DEFAULT_TIMEOUT, stream=True)
+                    if resp.status_code == 200:
+                        write_asset_atomic(
+                            grid_dir, appid_str, "_icon", ".ico", resp.content
+                        )
+                        downloaded_count += 1
+                    else:
+                        report(f"⚠️ Icon download returned HTTP {resp.status_code}")
+                except (
+                    requests.exceptions.ConnectionError,
+                    requests.exceptions.Timeout,
+                ) as e:
+                    if token.is_cancelled:
+                        return False, "❌ Cancelled."
+                    logger.warning(f"Network failure while downloading icon: {e}")
+                    return (
+                        False,
+                        "❌ Network connection lost or timed out while downloading icon. Please check your connection.",
+                    )
+                except Exception as e:
+                    if token.is_cancelled:
+                        return False, "❌ Cancelled."
+                    logger.warning(f"Failed downloading icon from {icon_url}: {e}")
+                    report(f"⚠️ Failed downloading icon: {e}")
+
+    if token.is_cancelled:
+        return False, "❌ Cancelled."
+
+    # 4. Generate JSON logo positioning
+    logo_pos = assets_meta.get("logo_position")
+    if logo_pos and (force or not existing_status.get("json", (False,))[0]):
+        report("📝 [4/4] Generating logo positioning JSON...")
+        try:
+            write_json_positioning(grid_dir, appid_str, logo_pos)
+            downloaded_count += 1
+        except Exception as e:
+            logger.warning(f"Failed writing positioning JSON: {e}")
+
+    # 5. Outcome verification
+    if downloaded_count == 0:
+        refreshed_status = get_asset_status(grid_dir, appid_str)
+        has_any_visual = any(
+            refreshed_status[slot][0] for slot in ("capsule", "header", "hero", "logo")
+        )
+        if not has_any_visual:
+            return False, "❌ No artwork could be downloaded from Steam for this game."
+        elif not force:
+            return True, "✅ All artwork is already up to date."
+        else:
+            return False, "❌ No new artwork was downloaded."
+
+    return True, f"✅ Successfully injected {downloaded_count} assets."
