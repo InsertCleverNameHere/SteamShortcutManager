@@ -1,11 +1,17 @@
+import sys
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from core.appid import to_uint32
 from core.platform.linux import LinuxPlatform
 from core.shortcuts_io import add_shortcut
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Linux-specific POSIX data path formatting"
+)
 def test_linux_data_path_formatting(tmp_path: Path):
     """
     Verify Linux data path rules:
