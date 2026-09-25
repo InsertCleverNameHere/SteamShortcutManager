@@ -1,6 +1,5 @@
 import json
 import os
-import socket
 import threading
 import time
 
@@ -26,6 +25,29 @@ _STEAM_CLIENT_TIMEOUT = (
 )
 
 
+def is_valid_image_bytes(data: bytes, expected_ext: str) -> bool:
+    """Validates header magic bytes to prevent writing HTML or corrupt payloads into image files (Plan §4.1 / F15)."""
+    if len(data) < 8:
+        return False
+
+    # Immediate rejection if payload is HTML or XML text
+    header_snippet = data[:64].strip().lower()
+    if header_snippet.startswith(
+        (b"<!doctype", b"<html", b"<?xml", b"<head", b"<body")
+    ):
+        return False
+
+    ext = expected_ext.lower()
+    if ext in (".jpg", ".jpeg"):
+        return data.startswith(b"\xff\xd8\xff")
+    if ext == ".png":
+        return data.startswith(b"\x89PNG\r\n\x1a\n")
+    if ext == ".ico":
+        return data.startswith(b"\x00\x00\x01\x00")
+
+    return True
+
+
 def search_steam_apps(query: str):
     """
     Queries Steam Store search to find a potential match for the name.
@@ -33,33 +55,45 @@ def search_steam_apps(query: str):
     """
     # Clean query: Replace hyphens/colons with spaces to help Steam's literal API
     clean_query = query.replace("-", " ").replace(":", " ")
-    url = f"https://store.steampowered.com/api/storesearch/?term={clean_query}&l=english&cc=US"
+    url = "https://store.steampowered.com/api/storesearch/"
+    params = {
+        "term": clean_query,
+        "l": "english",
+        "cc": "US",
+    }
     try:
-        r = requests.get(url, timeout=10)
+        # Use params for safe RFC 3986 URL encoding of '&', '#', '+', etc.
+        r = requests.get(url, params=params, timeout=10)
         r.raise_for_status()
         data = r.json()
-        if data.get("total", 0) > 0:
-            item = data["items"][0]
+        items = data.get("items", [])
+        # Guard against total > 0 when items list is empty
+        if data.get("total", 0) > 0 and items and len(items) > 0:
+            item = items[0]
             return {
                 "id": str(item.get("id")),
                 "name": item.get("name"),
                 "thumb_url": item.get("tiny_image"),
             }
         return None  # No results found (successfully queried)
-    except (requests.RequestException, ValueError) as e:
+    except (
+        requests.RequestException,
+        ValueError,
+        KeyError,
+        IndexError,
+        TypeError,
+    ) as e:
         logger.warning(f"Steam Store Search error: {e}")
         return "ERR_NETWORK"  # Specific error indicator
 
 
-def is_internet_reachable(timeout=2):
-    """Lightning-fast check to see if we can reach a public DNS server."""
+def is_internet_reachable(timeout=3):
+    """Checks if Steam network endpoints are reachable via standard HTTPS."""
     try:
-        # Connect to Cloudflare's public DNS port 53
-        socket.create_connection(("1.1.1.1", 53), timeout=timeout)
-        return True
-    except OSError:
-        pass
-    return False
+        r = requests.head("https://store.steampowered.com", timeout=timeout)
+        return r.status_code < 500
+    except Exception:
+        return False
 
 
 def download_assets(
@@ -172,6 +206,10 @@ def download_assets(
         if client_holder is not None:
             client_holder[0] = None
 
+        # Guard against None return on client timeout or network dropout
+        if not product_info or not isinstance(product_info, dict):
+            return False, "❌ Timed out fetching app metadata. Check your connection."
+
         app_data = product_info.get("apps", {}).get(int(steam_appid))
         if not app_data:
             return False, "❌ AppID not found on Steam."
@@ -220,6 +258,11 @@ def download_assets(
                 try:
                     res = requests.get(url, timeout=_ASSET_REQUEST_TIMEOUT)
                     if res.status_code == 200:
+                        if not is_valid_image_bytes(res.content, ext):
+                            report(
+                                f"⚠️ {display_name}: downloaded content was not a valid image"
+                            )
+                            break
                         with open(local_path, "wb") as f:
                             f.write(res.content)
                         downloaded_count += 1
@@ -257,6 +300,11 @@ def download_assets(
                     try:
                         res = requests.get(icon_url, timeout=_ASSET_REQUEST_TIMEOUT)
                         if res.status_code == 200:
+                            if not is_valid_image_bytes(res.content, ".ico"):
+                                report(
+                                    "⚠️ icon: downloaded content was not a valid icon"
+                                )
+                                break
                             with open(local_icon_path, "wb") as f:
                                 f.write(res.content)
                             downloaded_count += 1
@@ -294,6 +342,18 @@ def download_assets(
                 with open(json_path, "w") as f:
                     json.dump(json_data, f, separators=(",", ":"))
                 downloaded_count += 1
+
+        # Must have downloaded at least one visual asset to report overall success
+        if downloaded_count == 0 or (
+            downloaded_count == 1
+            and os.path.exists(json_path)
+            and not any(
+                os.path.exists(os.path.join(grid_dir, f"{local_appid}{sfx}{ext}"))
+                for sfx in ("p", "", "_hero", "_logo", "_icon")
+                for ext in (".jpg", ".png", ".jpeg", ".ico")
+            )
+        ):
+            return False, "❌ No artwork could be downloaded from Steam for this game."
 
         return True, f"✅ Successfully injected {downloaded_count} assets."
 

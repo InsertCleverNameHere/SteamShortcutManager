@@ -71,10 +71,16 @@ def create_backup(shortcuts_path: str | Path, max_backups: int = 10) -> Path | N
     backup_path = backup_dir / f"shortcuts_{timestamp}.vdf.bak"
     shutil.copy2(src, backup_path)
 
-    # Prune older backups
+    # Ensure backup modification time reflects creation time, not source mtime (F02)
+    try:
+        os.utime(backup_path, None)
+    except OSError:
+        pass
+
+    # Prune older backups sorted by microsecond-precise filename timestamp
     existing_backups = sorted(
         backup_dir.glob("shortcuts_*.vdf.bak"),
-        key=lambda p: p.stat().st_mtime,
+        key=lambda p: p.name,
         reverse=True,
     )
     for old_backup in existing_backups[max_backups:]:
@@ -158,10 +164,15 @@ class ShortcutsTransaction:
         self.shortcuts_path = Path(shortcuts_path)
         self.backup_path: Path | None = None
         self.data: dict = {}
+        self._initial_mtime_ns: int | None = None
+        self._initial_size: int | None = None
 
     def __enter__(self):
         self.data = load_shortcuts(self.shortcuts_path, strict=True)
         if self.shortcuts_path.is_file():
+            stat = self.shortcuts_path.stat()
+            self._initial_mtime_ns = stat.st_mtime_ns
+            self._initial_size = stat.st_size
             self.backup_path = create_backup(self.shortcuts_path)
         return self
 
@@ -169,6 +180,21 @@ class ShortcutsTransaction:
         if exc_type is not None:
             # An error occurred inside the caller's with-block; do not write
             return False
+
+        # Optimistic concurrency: merge external changes if file was modified mid-transaction
+        if self.shortcuts_path.is_file() and self._initial_mtime_ns is not None:
+            try:
+                current_stat = self.shortcuts_path.stat()
+                if (
+                    current_stat.st_mtime_ns != self._initial_mtime_ns
+                    or current_stat.st_size != self._initial_size
+                ):
+                    external_data = load_shortcuts(self.shortcuts_path, strict=True)
+                    for k, v in external_data.get("shortcuts", {}).items():
+                        if k not in self.data.get("shortcuts", {}):
+                            self.data.setdefault("shortcuts", {})[k] = v
+            except Exception:
+                pass
 
         # Attempt atomic write
         save_shortcuts_atomic(self.shortcuts_path, self.data)
@@ -194,7 +220,7 @@ class ShortcutsTransaction:
 
 
 def get_available_backups(shortcuts_path: str | Path) -> list[Path]:
-    """Returns all backup files in ssm-backups/ sorted newest first."""
+    """Returns all backup files in ssm-backups/ sorted newest first by filename timestamp."""
     src = Path(shortcuts_path)
     backup_dir = src.parent / "ssm-backups"
     if not backup_dir.is_dir():
@@ -202,17 +228,24 @@ def get_available_backups(shortcuts_path: str | Path) -> list[Path]:
 
     return sorted(
         backup_dir.glob("shortcuts_*.vdf.bak"),
-        key=lambda p: p.stat().st_mtime,
+        key=lambda p: p.name,
         reverse=True,
     )
 
 
 def restore_backup(backup_path: str | Path, target_path: str | Path) -> bool:
-    """Restores a selected backup file over target_path atomically."""
+    """
+    Restores a selected backup file over target_path atomically.
+    Takes a pre-restore safety snapshot of the current state first (F03).
+    """
     src = Path(backup_path)
     dst = Path(target_path)
     if not src.is_file():
         return False
+
+    # Snapshot current state before restoring so restore is completely reversible
+    if dst.is_file() and dst.stat().st_size > 0:
+        create_backup(dst)
 
     data = load_shortcuts(src, strict=True)
     save_shortcuts_atomic(dst, data)
@@ -259,18 +292,36 @@ def add_shortcut(
     Returns (unsigned_appid_string, new_entry_dict).
     """
     shortcuts = data.setdefault("shortcuts", {})
-    clean_exe = exe_path.strip().strip('"')
+    # Normalize slashes across platforms so dialogs and drag-drop yield identical AppIDs
+    clean_exe = os.path.normpath(exe_path.strip().strip('"'))
     quoted_exe = f'"{clean_exe}"'
+
+    # Sanitize game name: strip whitespace and fall back to executable stem if empty
+    clean_name = game_name.strip()
+    if not clean_name:
+        clean_name = Path(clean_exe).stem or "Unnamed Game"
 
     if not start_dir:
         start_dir = get_platform().format_start_dir(clean_exe)
 
-    unsigned_appid = generate_shortcut_appid(clean_exe, game_name)
+    # Disambiguate duplicate games to prevent shared AppID collisions
+    existing_appids = {
+        normalize_appid(get_value_case_insensitive(entry, "appid"))
+        for entry in shortcuts.values()
+    }
+    unsigned_appid = generate_shortcut_appid(clean_exe, clean_name)
+    duplicate_counter = 1
+    original_base_name = clean_name
+    while str(unsigned_appid) in existing_appids:
+        clean_name = f"{original_base_name} ({duplicate_counter})"
+        unsigned_appid = generate_shortcut_appid(clean_exe, clean_name)
+        duplicate_counter += 1
+
     signed_appid = to_int32(unsigned_appid)
 
     new_entry = {
         "appid": signed_appid,
-        "AppName": game_name,
+        "AppName": clean_name,
         "Exe": quoted_exe,
         "StartDir": start_dir,
         "icon": icon_path,
@@ -288,7 +339,16 @@ def add_shortcut(
         "tags": {},
     }
 
-    next_idx = str(len(shortcuts))
+    # Allocate the next available sequential numeric key
+    numeric_keys = [int(k) for k in shortcuts.keys() if k.isdigit()]
+    next_num = max(numeric_keys) + 1 if numeric_keys else 0
+    next_idx = str(next_num)
+
+    # Secondary safeguard: guarantee key is never overwritten
+    while next_idx in shortcuts:
+        next_num += 1
+        next_idx = str(next_num)
+
     shortcuts[next_idx] = new_entry
     return str(unsigned_appid), new_entry
 

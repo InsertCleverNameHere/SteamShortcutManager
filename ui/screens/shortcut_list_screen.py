@@ -1,5 +1,4 @@
 import os
-from datetime import datetime
 
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtGui import QAction, QActionGroup
@@ -287,14 +286,16 @@ class ShortcutListScreen(QtWidgets.QWidget):
             )
             return
 
-        # Build readable labels with formatted timestamps
+        # Build readable labels from filename timestamp (shortcuts_YYYYMMDD_HHMMSS_ffffff)
         labels = []
         for b in backups:
-            try:
-                mtime = datetime.fromtimestamp(b.stat().st_mtime)
-                date_str = mtime.strftime("%Y-%m-%d %H:%M:%S")
-            except OSError:
-                date_str = b.name
+            date_str = b.name
+            # Extract timestamp from filename: shortcuts_YYYYMMDD_HHMMSS_...
+            parts = b.stem.split("_")
+            if len(parts) >= 3:
+                d_part, t_part = parts[1], parts[2]
+                if len(d_part) == 8 and len(t_part) >= 6:
+                    date_str = f"{d_part[:4]}-{d_part[4:6]}-{d_part[6:8]} {t_part[:2]}:{t_part[2:4]}:{t_part[4:6]}"
             size_kb = max(1, round(b.stat().st_size / 1024))
             labels.append(f"{date_str}  ({size_kb} KB)")
 
@@ -343,7 +344,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
         )
         if not raw_path:
             return
-        self._start_add_from_path(raw_path)
+        self._start_add_from_path(os.path.normpath(raw_path))
 
     def _start_add_from_path(self, raw_path: str):
         """
@@ -428,7 +429,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
             self._start_add_from_path(valid_path)
             return
 
-        # Friendly rejection messages per Plan §2.1
+        # Friendly rejection messages
         event.ignore()
         ext = os.path.splitext(path)[1].lower() or "folder"
         if ext in (".bat", ".msi"):
@@ -459,7 +460,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
         if ok and game_name:
             vdf_path = self._current_user_obj.shortcuts_path
 
-            # Save to VDF (icon left empty by default per Plan §2.4)
+            # Save to VDF (icon left empty by default
             success, msg, new_id = vdf_parser.add_new_shortcut(
                 vdf_path, game_name, exe_path
             )

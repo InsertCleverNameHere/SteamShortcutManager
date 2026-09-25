@@ -12,6 +12,7 @@ ENV/
 # --- Packaging, Build & Setuptools ---
 build/
 dist/
+out/
 *.egg-info/
 .eggs/
 *.spec.bak

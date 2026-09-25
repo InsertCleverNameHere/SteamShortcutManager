@@ -43,6 +43,7 @@ def get_resource_path(relative_path):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        setup_logging()  # Ensure app.log is created on startup
         self.setWindowTitle("Steam Shortcut Manager")
         self.resize(800, 700)
         app_icon = get_app_icon()
@@ -65,6 +66,9 @@ class MainWindow(QMainWindow):
 
         # Connections
         self.setup_screen.steam_dir_confirmed.connect(self.on_steam_dir_found)
+        self.setup_screen.cancel_requested.connect(
+            lambda: self.stack.setCurrentWidget(self.library_screen)
+        )
         self.library_screen.change_steam_dir.connect(
             lambda: self.stack.setCurrentWidget(self.setup_screen)
         )
@@ -114,6 +118,23 @@ class MainWindow(QMainWindow):
     def on_back_from_details(self):
         """Returns to the shortcut list while preserving the current window size."""
         self.stack.setCurrentWidget(self.shortcut_screen)
+
+    def closeEvent(self, event):
+        """Ensures background worker threads are cleanly terminated before window destruction (F22)."""
+        from ui.screens.asset_details_screen import AssetDetailsScreen
+
+        # 1. Signal active download worker to abort if running
+        if hasattr(self.asset_screen, "_worker") and self.asset_screen._worker:
+            self.asset_screen._worker.abort()
+
+        # 2. Wait up to 1.5s for all active background threads to finish
+        for thread in list(AssetDetailsScreen._active_threads):
+            if thread.isRunning():
+                thread.quit()
+                thread.wait(1500)
+        AssetDetailsScreen._active_threads.clear()
+
+        event.accept()
 
 
 if __name__ == "__main__":

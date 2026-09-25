@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -160,11 +161,14 @@ def test_add_shortcut_delegates_start_dir_to_platform():
     mock_platform = MagicMock()
     mock_platform.format_start_dir.return_value = "/mocked/start/dir/"
 
+    raw_exe = "/custom/path/game.exe"
+    expected_exe = os.path.normpath(raw_exe)
+
     data = {"shortcuts": {}}
     with patch("core.shortcuts_io.get_platform", return_value=mock_platform):
-        _, entry = add_shortcut(data, "Custom Game", "/custom/path/game.exe")
+        _, entry = add_shortcut(data, "Custom Game", raw_exe)
 
-    mock_platform.format_start_dir.assert_called_once_with("/custom/path/game.exe")
+    mock_platform.format_start_dir.assert_called_once_with(expected_exe)
     assert entry["StartDir"] == "/mocked/start/dir/"
 
 
