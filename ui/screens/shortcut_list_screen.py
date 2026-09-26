@@ -49,6 +49,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._current_user_obj = None
         self._task_runner = TaskRunner(self)
         self._card_data = []  # Track widgets and names for filtering
         self._sort_mode = "default"  # "default" | "alpha" | "missing_first"
@@ -468,6 +469,25 @@ class ShortcutListScreen(QtWidgets.QWidget):
                 "Could not determine the target executable for the selected file.",
             )
             return
+
+        if not self._current_user_obj:
+            return
+
+        # Check platform compatibility warnings (e.g. installers or filesystem risks)
+        warnings = get_platform().path_warnings(
+            exe_path, install=self._current_user_obj.install
+        )
+        if warnings:
+            warning_msg = "\n\n".join(warnings)
+            reply = QtWidgets.QMessageBox.question(
+                self,
+                "Compatibility Warning",
+                f"{warning_msg}\n\nDo you want to add this shortcut anyway?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if reply != QtWidgets.QMessageBox.Yes:
+                return
 
         game_name, ok = QtWidgets.QInputDialog.getText(
             self, "Add Shortcut", "Enter game name:", text=derived_name

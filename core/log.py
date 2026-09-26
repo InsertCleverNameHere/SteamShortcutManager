@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 import tempfile
+import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -133,3 +134,37 @@ def get_recent_log_lines(count: int = 200) -> list[str]:
         return lines[-count:]
     except Exception:
         return []
+
+
+def install_excepthooks() -> None:
+    """
+    Installs global exception handlers to capture unhandled main and worker
+    thread crashes into the rotating log file, preventing silent failures in windowed builds.
+    """
+    logger = logging.getLogger(LOGGER_NAME)
+
+    def _handle_main_exception(exc_type, exc_value, exc_traceback):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+        exc_info = (
+            (exc_type, exc_value, exc_traceback) if exc_value is not None else True
+        )
+        logger.critical("Unhandled application crash:", exc_info=exc_info)
+
+    def _handle_thread_exception(args: threading.ExceptHookArgs):
+        if args.exc_type is not None and issubclass(args.exc_type, KeyboardInterrupt):
+            return
+        thread_name = args.thread.name if args.thread else "UnknownThread"
+        exc_info = (
+            (args.exc_type, args.exc_value, args.exc_traceback)
+            if args.exc_type is not None and args.exc_value is not None
+            else True
+        )
+        logger.critical(
+            f"Unhandled crash in background thread '{thread_name}':",
+            exc_info=exc_info,
+        )
+
+    sys.excepthook = _handle_main_exception
+    threading.excepthook = _handle_thread_exception

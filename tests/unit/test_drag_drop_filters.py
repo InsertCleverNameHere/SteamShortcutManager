@@ -64,3 +64,44 @@ def test_extract_droppable_path_accepts_valid_exe(qtbot, tmp_path: Path):
         result = screen._extract_droppable_path(mime)
         assert result is not None
         assert Path(result) == fake_exe
+
+
+def test_on_shortcut_resolved_warns_on_installer_path(qtbot):
+    """Verify that resolving an installer path prompts a confirmation and respects cancellation."""
+    from PySide6 import QtWidgets
+
+    from core.steam import SteamUserShortcuts
+
+    mock_platform = MagicMock()
+    mock_platform.path_warnings.return_value = [
+        "This file appears to be an installer or redistributable, not a game executable."
+    ]
+
+    with patch(
+        "ui.screens.shortcut_list_screen.get_platform", return_value=mock_platform
+    ):
+        screen = ShortcutListScreen()
+        qtbot.addWidget(screen)
+
+        dummy_user = SteamUserShortcuts(
+            userdata_id="12345",
+            steam_id64=None,
+            persona_name="Gamer",
+            shortcuts_path="/tmp/shortcuts.vdf",
+            shortcut_count=0,
+            avatar_path=None,
+            install=None,
+        )
+        screen._current_user_obj = dummy_user
+
+        # Simulate user choosing 'No' on the warning dialog
+        with patch.object(
+            QtWidgets.QMessageBox, "question", return_value=QtWidgets.QMessageBox.No
+        ) as mock_question:
+            with patch.object(QtWidgets.QInputDialog, "getText") as mock_input:
+                screen._on_shortcut_resolved(
+                    "/tmp/setup.exe", "/tmp/setup.exe", "Setup"
+                )
+                mock_question.assert_called_once()
+                # Name dialog must not be reached if user cancels the warning
+                mock_input.assert_not_called()

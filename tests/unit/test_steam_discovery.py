@@ -29,3 +29,33 @@ def test_confirm_steam_closed_warns_once_per_session_when_unknown(qtbot):
             res2 = confirm_steam_closed(None)
             assert res2 is True
             assert mock_info.call_count == 1
+
+
+def test_confirm_steam_closed_polling_requires_explicit_false(qtbot):
+    """Verify shutdown polling loop waits for explicit False and does not exit on indeterminate status."""
+    from PySide6 import QtWidgets
+
+    mock_platform = MagicMock()
+    # 1st call: True (prompts dialog)
+    # 2nd call: None (indeterminate, must continue waiting)
+    # 3rd call: False (confirmed closed, exits loop)
+    mock_platform.is_steam_running.side_effect = [True, None, False]
+    mock_platform.request_steam_shutdown.return_value = True
+
+    def fake_exec(dialog_self):
+        for btn in dialog_self.buttons():
+            if "close" in btn.text().lower():
+                dialog_self._test_clicked = btn
+                break
+
+    with patch("ui.widgets.steam_guard.get_platform", return_value=mock_platform):
+        with patch.object(QtWidgets.QMessageBox, "exec", fake_exec):
+            with patch.object(
+                QtWidgets.QMessageBox,
+                "clickedButton",
+                lambda self: getattr(self, "_test_clicked", None),
+            ):
+                with patch("time.sleep"):
+                    res = confirm_steam_closed(None)
+                    assert res is True
+                    assert mock_platform.is_steam_running.call_count == 3

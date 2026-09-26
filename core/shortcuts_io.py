@@ -15,7 +15,10 @@ from typing import Any
 import vdf
 
 from core.appid import generate_shortcut_appid, normalize_appid, to_int32
+from core.log import get_logger
 from core.platform import get_platform
+
+logger = get_logger("shortcuts_io")
 
 
 class ShortcutsError(Exception):
@@ -154,10 +157,10 @@ class ShortcutsTransaction:
     """
     Context manager for safe shortcut operations.
     1. Loads the file strictly.
-    2. Takes a rotating timestamped backup.
+    2. Takes a rotating timestamped backup if the file already exists.
     3. Yields the mutable transaction object.
     4. On exit, atomically writes and verifies the file.
-    5. If verification fails, restores the backup and raises ShortcutsFileError.
+    5. If verification fails, atomically restores the backup or removes the failed new file.
     """
 
     def __init__(self, shortcuts_path: str | Path):
@@ -166,10 +169,12 @@ class ShortcutsTransaction:
         self.data: dict = {}
         self._initial_mtime_ns: int | None = None
         self._initial_size: int | None = None
+        self._initial_existed: bool = False
 
     def __enter__(self):
+        self._initial_existed = self.shortcuts_path.is_file()
         self.data = load_shortcuts(self.shortcuts_path, strict=True)
-        if self.shortcuts_path.is_file():
+        if self._initial_existed:
             stat = self.shortcuts_path.stat()
             self._initial_mtime_ns = stat.st_mtime_ns
             self._initial_size = stat.st_size
@@ -209,9 +214,20 @@ class ShortcutsTransaction:
                     f"Integrity check failed: expected {expected_count} entries, found {actual_count}."
                 )
         except Exception as e:
-            # Verification failed; restore backup if available
+            # Verification failed; restore backup atomically if available
             if self.backup_path and self.backup_path.is_file():
-                shutil.copy2(self.backup_path, self.shortcuts_path)
+                try:
+                    data_bak = load_shortcuts(self.backup_path, strict=True)
+                    save_shortcuts_atomic(self.shortcuts_path, data_bak)
+                except Exception as restore_err:
+                    logger.error(f"Failed to atomically restore backup: {restore_err}")
+            elif not self._initial_existed and self.shortcuts_path.is_file():
+                # File did not exist prior to transaction; purge failed write
+                try:
+                    self.shortcuts_path.unlink()
+                except OSError:
+                    pass
+
             raise ShortcutsFileError(
                 f"Shortcut write verification failed (backup restored): {e}"
             ) from e
