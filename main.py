@@ -7,9 +7,10 @@ os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 # Silence noisy host portal lookup warning when running uninstalled
 os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.services=false")
 
-from core.log import setup_logging
+from core.log import install_excepthooks, setup_logging
 
 setup_logging()
+install_excepthooks()
 
 # Fast path: handle --version before loading GUI dependencies
 if "--version" in sys.argv:
@@ -17,6 +18,104 @@ if "--version" in sys.argv:
 
     print(f"Steam Shortcut Manager v{__version__}")
     sys.exit(0)
+
+# Fast path: headless child-process worker for Steam PICS metadata fetch (B2)
+if "--fetch-product-info" in sys.argv:
+    import json
+
+    try:
+        idx = sys.argv.index("--fetch-product-info")
+        target_appid_str = sys.argv[idx + 1]
+        target_appid = int(target_appid_str)
+    except (IndexError, ValueError):
+        print(
+            json.dumps(
+                {
+                    "type": "error",
+                    "error": "invalid_args",
+                    "message": "Valid numeric AppID required.",
+                }
+            ),
+            flush=True,
+        )
+        sys.exit(2)
+
+    try:
+        from steam.client import SteamClient
+
+        print(
+            json.dumps({"type": "status", "message": "Connecting to Steam..."}),
+            flush=True,
+        )
+        client = SteamClient()
+        login_res = client.anonymous_login()
+        if login_res != 1:
+            print(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error": "login_failed",
+                        "message": f"Steam anonymous login failed (code {login_res}).",
+                    }
+                ),
+                flush=True,
+            )
+            sys.exit(1)
+
+        print(
+            json.dumps({"type": "status", "message": "Fetching app metadata..."}),
+            flush=True,
+        )
+        info = client.get_product_info(apps=[target_appid])
+        try:
+            client.disconnect()
+        except Exception:
+            pass
+
+        if not info or not isinstance(info, dict):
+            print(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error": "not_found",
+                        "message": "No metadata returned from Steam servers.",
+                    }
+                ),
+                flush=True,
+            )
+            sys.exit(1)
+
+        app_data = info.get("apps", {}).get(target_appid, {})
+        if not app_data:
+            print(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error": "not_found",
+                        "message": f"AppID {target_appid} was not found on Steam.",
+                    }
+                ),
+                flush=True,
+            )
+            sys.exit(1)
+
+        common = app_data.get("common", {})
+        payload = {
+            "appid": target_appid,
+            "name": common.get("name", ""),
+            "library_assets_full": common.get("library_assets_full", {}),
+            "library_assets": common.get("library_assets", {}),
+            "clienticon": common.get("clienticon") or common.get("icon") or "",
+        }
+        print(json.dumps({"type": "result", "payload": payload}), flush=True)
+        sys.exit(0)
+
+    except Exception as exc:
+        print(
+            json.dumps({"type": "error", "error": "exception", "message": str(exc)}),
+            flush=True,
+        )
+        sys.exit(1)
 
 
 from PySide6.QtGui import QGuiApplication
@@ -120,19 +219,18 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.shortcut_screen)
 
     def closeEvent(self, event):
-        """Ensures background worker threads are cleanly terminated before window destruction (F22)."""
-        from ui.screens.asset_details_screen import AssetDetailsScreen
+        """Ensures background worker threads are cleanly terminated before window destruction."""
+        # Hide window immediately so the application never appears frozen to the OS
+        self.hide()
 
-        # 1. Signal active download worker to abort if running
-        if hasattr(self.asset_screen, "_worker") and self.asset_screen._worker:
-            self.asset_screen._worker.abort()
+        # Drain and shutdown active task runners
+        if hasattr(self, "asset_screen") and hasattr(self.asset_screen, "_task_runner"):
+            self.asset_screen._task_runner.shutdown(timeout_ms=1500)
 
-        # 2. Wait up to 1.5s for all active background threads to finish
-        for thread in list(AssetDetailsScreen._active_threads):
-            if thread.isRunning():
-                thread.quit()
-                thread.wait(1500)
-        AssetDetailsScreen._active_threads.clear()
+        if hasattr(self, "shortcut_screen") and hasattr(
+            self.shortcut_screen, "_task_runner"
+        ):
+            self.shortcut_screen._task_runner.shutdown(timeout_ms=1000)
 
         event.accept()
 

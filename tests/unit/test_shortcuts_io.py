@@ -186,3 +186,54 @@ def test_update_shortcut_icon_preserves_case():
     updated = update_shortcut_icon(data, -200, "/path/to/icon.ico")
     assert updated is True
     assert data["shortcuts"]["0"]["icon"] == "/path/to/icon.ico"
+
+
+def test_transaction_verification_failure_restores_backup_atomically(tmp_path: Path):
+    """Verify that a verification failure rolls back to the backup atomically."""
+    vdf_file = tmp_path / "shortcuts.vdf"
+    data = {"shortcuts": {"0": {"appid": 100, "AppName": "Original"}}}
+    save_shortcuts_atomic(vdf_file, data)
+
+    # Force verification failure on the second load_shortcuts call
+    call_count = 0
+    orig_load = load_shortcuts
+
+    def mock_load(path, strict=True):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:  # Verification step in __exit__
+            raise ShortcutsFileError("Simulated verification parse failure")
+        return orig_load(path, strict=strict)
+
+    with patch("core.shortcuts_io.load_shortcuts", side_effect=mock_load):
+        with pytest.raises(ShortcutsFileError):
+            with ShortcutsTransaction(vdf_file) as tx:
+                add_shortcut(tx.data, "ShouldFail", "/bin/game")
+
+    # File on disk must parse cleanly and match original content
+    restored_data = load_shortcuts(vdf_file)
+    assert len(restored_data["shortcuts"]) == 1
+    assert restored_data["shortcuts"]["0"]["AppName"] == "Original"
+
+
+def test_transaction_verification_failure_no_prior_file_cleans_up(tmp_path: Path):
+    """Verify that when no prior file existed, a verification failure purges the file (F34)."""
+    vdf_file = tmp_path / "new_profile" / "shortcuts.vdf"
+
+    call_count = 0
+    orig_load = load_shortcuts
+
+    def mock_load(path, strict=True):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:  # Verification step
+            raise ShortcutsFileError("Simulated verification parse failure")
+        return orig_load(path, strict=strict)
+
+    with patch("core.shortcuts_io.load_shortcuts", side_effect=mock_load):
+        with pytest.raises(ShortcutsFileError):
+            with ShortcutsTransaction(vdf_file) as tx:
+                add_shortcut(tx.data, "FirstGame", "/bin/game")
+
+    # Corrupt file must be purged; no broken file left on disk
+    assert not vdf_file.exists()
