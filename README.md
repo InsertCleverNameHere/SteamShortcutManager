@@ -12,7 +12,7 @@ A robust, lightweight utility for managing Steam's binary `shortcuts.vdf` files 
 - **Smart Asset & Icon Injection:** One-click fetching of official Steam Grid art (Capsule, Hero, Logo, Header), application icons, and positioning JSON directly from Steam's CDN.
 - **Background Search:** Real-time Steam Store matching with thumbnail previews.
 - **Transactional Safety:** Automatic timestamped rotating backups (`ssm-backups/`), atomic writes with `fsync`, and in-app backup restoration.
-- **Steam-Running Guard:** Warns and blocks edits while Steam is running in the background to prevent edits from being overwritten on exit.
+- **Steam-Running Guard:** Warns and safeguards against Steam overwriting your edits, with options to shut down Steam gracefully or continue anyway.
 - **Binary Precision:** Native signed 32-bit VDF integer storage with CRC32 AppID generation to ensure native Steam client compatibility.
 - **Portable & Fast:** Standalone Windows `.exe` and Linux `.AppImage` with zero installation required.
 
@@ -85,10 +85,11 @@ A robust, lightweight utility for managing Steam's binary `shortcuts.vdf` files 
 
 This project was built with a focus on "Hardened" stability:
 
-- **Thread Safety:** All network and I/O tasks run on background workers to prevent UI freezes.
-- **Registry Pattern:** Background worker threads are anchored in a central registry to prevent premature garbage-collection crashes.
-- **Lockdown UI:** A fixed-width responsive layout ensures a consistent experience regardless of game title length or scaling.
-- **Atomic Transactions:** Writes pass through `ShortcutsTransaction`, guaranteeing files are never partially written or corrupted during unexpected power loss or crashes.
+- **Process Isolation:** Steam network queries run in a lightweight, isolated child process. The main graphical interface never touches Valve's internal networking libraries or protobuf C-extensions directly, preventing runtime crashes.
+- **Task Framework:** Background work executes via a managed `TaskRunner` with cooperative `CancelToken` and guaranteed terminal signals, eliminating UI lockouts and thread leaks on window close.
+- **Instant Cancellation:** Cancellation triggers immediate TCP socket shutdown, aborting in-flight asset downloads in milliseconds.
+- **Atomic Grid Writes:** Image downloads stream into temporary `.part` files, validate header magic bytes to reject corrupted payloads or captive portals, and atomically prune stale sibling extensions before replacing the target file.
+- **Atomic Transactions:** Binary `shortcuts.vdf` mutations pass through `ShortcutsTransaction`, guaranteeing files are strictly parsed, backed up with microsecond-timestamped snapshots, and atomically verified on save.
 - **Binary Precision:** Stores AppIDs as native 32-bit signed integers in `shortcuts.vdf` while mapping unsigned IDs for grid filenames, matching Steam's exact internal specifications.
 
 ## 📄 License
