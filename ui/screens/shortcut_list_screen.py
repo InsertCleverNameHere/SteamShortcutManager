@@ -9,22 +9,21 @@ from core.log import get_logger
 from core.pe_info import get_game_name_from_pe
 from core.platform import get_platform
 from core.shortcuts_io import ShortcutsFileError, get_available_backups, restore_backup
+from ui.tasks import CancelToken, Task, TaskRunner
 from ui.theme import PALETTE, get_icon
 from ui.widgets.steam_guard import confirm_steam_closed
 
 logger = get_logger("shortcut_list_screen")
 
 
-class AddShortcutWorker(QtCore.QObject):
-    """Resolves file metadata in the background to prevent UI lag."""
+class ResolveShortcutTask(Task):
+    """Resolves executable target and metadata in the background without UI lag."""
 
-    finished = QtCore.Signal(str, str, str)  # (raw_path, exe_path, derived_name)
-
-    def __init__(self, raw_path):
-        super().__init__()
+    def __init__(self, raw_path: str):
         self.raw_path = raw_path
 
-    def run(self):
+    def run(self, token: CancelToken) -> tuple[str, str | None, str]:
+        token.raise_if_cancelled()
         file_label = os.path.splitext(os.path.basename(self.raw_path))[0]
         if self.raw_path.lower().endswith(".lnk"):
             exe_path = resolve_lnk(self.raw_path)
@@ -32,7 +31,8 @@ class AddShortcutWorker(QtCore.QObject):
         else:
             exe_path = self.raw_path
             derived_name = get_game_name_from_pe(exe_path)
-        self.finished.emit(self.raw_path, exe_path, derived_name)
+        token.raise_if_cancelled()
+        return self.raw_path, exe_path, derived_name
 
 
 class ShortcutListScreen(QtWidgets.QWidget):
@@ -49,6 +49,8 @@ class ShortcutListScreen(QtWidgets.QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._current_user_obj = None
+        self._task_runner = TaskRunner(self)
         self._card_data = []  # Track widgets and names for filtering
         self._sort_mode = "default"  # "default" | "alpha" | "missing_first"
         self.setAcceptDrops(True)
@@ -357,22 +359,28 @@ class ShortcutListScreen(QtWidgets.QWidget):
         if not confirm_steam_closed(self):
             return
 
-        # Ensure refresh button is disabled during resolution
+        # Ensure buttons are disabled during resolution
         self.add_btn.setEnabled(False)
         self.refresh_btn.setEnabled(False)
 
-        # Start background resolution
-        self._add_thread = QtCore.QThread()
-        self._add_worker = AddShortcutWorker(raw_path)
-        self._add_worker.moveToThread(self._add_thread)
+        # Start background resolution via TaskRunner
+        self._task_runner.start(
+            ResolveShortcutTask(raw_path),
+            key="resolve_shortcut",
+            on_result=lambda res: self._on_shortcut_resolved(*res),
+            on_error=self._on_resolve_error,
+        )
 
-        self._add_thread.started.connect(self._add_worker.run)
-        self._add_worker.finished.connect(self._on_shortcut_resolved)
-        self._add_worker.finished.connect(self._add_thread.quit)
-        self._add_worker.finished.connect(self._add_worker.deleteLater)
-        self._add_thread.finished.connect(self._add_thread.deleteLater)
-
-        self._add_thread.start()
+    def _on_resolve_error(self, exc: Exception):
+        """Handles resolution errors and guarantees buttons re-enable."""
+        self.add_btn.setEnabled(True)
+        self.refresh_btn.setEnabled(True)
+        logger.warning(f"Failed to resolve shortcut metadata: {exc}")
+        QtWidgets.QMessageBox.warning(
+            self,
+            "Shortcut Error",
+            f"Could not read executable information: {exc}",
+        )
 
     def _extract_droppable_path(self, mime_data) -> str | None:
         """Returns the local file path if the drop contains exactly one valid game executable."""
@@ -453,6 +461,34 @@ class ShortcutListScreen(QtWidgets.QWidget):
         # Re-enable buttons
         self.add_btn.setEnabled(True)
         self.refresh_btn.setEnabled(True)
+
+        if not exe_path:
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Invalid Shortcut",
+                "Could not determine the target executable for the selected file.",
+            )
+            return
+
+        if not self._current_user_obj:
+            return
+
+        # Check platform compatibility warnings (e.g. installers or filesystem risks)
+        warnings = get_platform().path_warnings(
+            exe_path, install=self._current_user_obj.install
+        )
+        if warnings:
+            warning_msg = "\n\n".join(warnings)
+            reply = QtWidgets.QMessageBox.question(
+                self,
+                "Compatibility Warning",
+                f"{warning_msg}\n\nDo you want to add this shortcut anyway?",
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No,
+            )
+            if reply != QtWidgets.QMessageBox.Yes:
+                return
+
         game_name, ok = QtWidgets.QInputDialog.getText(
             self, "Add Shortcut", "Enter game name:", text=derived_name
         )

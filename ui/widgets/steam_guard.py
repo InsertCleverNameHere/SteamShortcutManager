@@ -73,21 +73,21 @@ def confirm_steam_closed(parent: QtWidgets.QWidget | None = None) -> bool:
         return True
 
     if clicked == close_btn:
-        # Request shutdown and poll for up to 4 seconds
+        # Request shutdown and poll for up to 8 seconds
         platform.request_steam_shutdown()
 
-        progress = QtWidgets.QProgressDialog("Closing Steam...", "", 0, 8, parent)
+        progress = QtWidgets.QProgressDialog("Closing Steam...", "", 0, 16, parent)
         progress.setCancelButton(None)
         progress.setWindowTitle("Please Wait")
         progress.setWindowModality(QtCore.Qt.WindowModal)
         progress.setMinimumDuration(200)
         progress.show()
 
-        for step in range(8):
+        for step in range(16):
             QtCore.QCoreApplication.processEvents()
             time.sleep(0.5)
             progress.setValue(step + 1)
-            if not platform.is_steam_running():
+            if platform.is_steam_running() is False:
                 progress.close()
                 return True
 

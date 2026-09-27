@@ -3,6 +3,9 @@ from pathlib import Path
 
 import pytest
 
+# Ensure headless offscreen execution by default across all test runs
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 # Ensure modern protobuf works cleanly with steam.client across all test runs
 os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
 

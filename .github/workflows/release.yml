@@ -1,10 +1,20 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  pull_request:
+    types: [closed]
+    branches: [main]
   workflow_dispatch:
+    inputs:
+      bump:
+        description: "SemVer bump level (for manual dispatch)"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
@@ -12,13 +22,107 @@ permissions:
   attestations: write
 
 jobs:
-  build-windows:
-    name: Build Windows Executable
-    runs-on: windows-latest
-
+  prepare-release:
+    name: Determine SemVer & Push Tag
+    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.version_calc.outputs.new_version }}
+      new_tag: ${{ steps.version_calc.outputs.new_tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Calculate Next SemVer Version
+        id: version_calc
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          DISPATCH_BUMP: ${{ github.event.inputs.bump }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          python - << 'PY'
+          import json
+          import os
+          import re
+
+          labels_raw = os.environ.get("LABELS", "[]")
+          dispatch_bump = os.environ.get("DISPATCH_BUMP", "")
+          event_name = os.environ.get("EVENT_NAME", "")
+
+          try:
+              labels = [l.lower() for l in json.loads(labels_raw)] if labels_raw else []
+          except Exception:
+              labels = []
+
+          if event_name == "workflow_dispatch" and dispatch_bump:
+              bump = dispatch_bump.lower()
+          elif any(l in ("major", "breaking") for l in labels):
+              bump = "major"
+          elif any(l in ("minor", "feature", "enhancement") for l in labels):
+              bump = "minor"
+          else:
+              bump = "patch"
+
+          ver_file = "core/version.py"
+          with open(ver_file, "r", encoding="utf-8") as f:
+              content = f.read()
+
+          match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
+          curr_ver = match.group(1) if match else "0.4.0"
+
+          parts = curr_ver.split(".")
+          major = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 0
+          minor = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 4
+          patch = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+
+          if bump == "major":
+              new_ver = f"{major + 1}.0.0"
+          elif bump == "minor":
+              new_ver = f"{major}.{minor + 1}.0"
+          else:
+              new_ver = f"{major}.{minor}.{patch + 1}"
+
+          new_tag = f"v{new_ver}"
+          print(f"Calculated next version ({bump}): {curr_ver} -> {new_ver} ({new_tag})")
+
+          new_content = re.sub(
+              r'__version__\s*=\s*["\'][^"\']+["\']',
+              f'__version__ = "{new_ver}"',
+              content,
+          )
+          with open(ver_file, "w", encoding="utf-8") as f:
+              f.write(new_content)
+
+          github_output = os.environ.get("GITHUB_OUTPUT")
+          if github_output:
+              with open(github_output, "a", encoding="utf-8") as out:
+                  out.write(f"new_version={new_ver}\n")
+                  out.write(f"new_tag={new_tag}\n")
+          PY
+
+      - name: Commit Version Bump & Push Tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add core/version.py
+          git commit -m "chore(release): bump version to ${{ steps.version_calc.outputs.new_version }} [skip ci]"
+          git tag -a "${{ steps.version_calc.outputs.new_tag }}" -m "Release ${{ steps.version_calc.outputs.new_tag }}"
+          git push origin main
+          git push origin "${{ steps.version_calc.outputs.new_tag }}"
+
+  build-windows:
+    name: Build Windows Executable
+    needs: prepare-release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout tagged release
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-release.outputs.new_tag }}
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -35,7 +139,12 @@ jobs:
         run: pyinstaller build.spec
 
       - name: Run Windows Smoke Test
-        run: .\dist\SteamShortcutManager.exe --smoke-test
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath ".\dist\SteamShortcutManager.exe" -ArgumentList "--smoke-test" -Wait -PassThru
+          if ($proc.ExitCode -ne 0) {
+              throw "Windows smoke test failed with exit code $($proc.ExitCode)"
+          }
 
       - name: Upload Windows binary artifact
         uses: actions/upload-artifact@v7
@@ -46,11 +155,14 @@ jobs:
 
   build-linux:
     name: Build Linux AppImage
+    needs: prepare-release
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout repository
+      - name: Checkout tagged release
         uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-release.outputs.new_tag }}
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -83,7 +195,7 @@ jobs:
 
   publish-release:
     name: Publish Release & Attest Provenance
-    needs: [build-windows, build-linux]
+    needs: [prepare-release, build-windows, build-linux]
     runs-on: ubuntu-latest
 
     steps:
@@ -110,6 +222,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ needs.prepare-release.outputs.new_tag }}
+          name: Steam Shortcut Manager ${{ needs.prepare-release.outputs.new_tag }}
           files: |
             dist/SteamShortcutManager.exe
             dist/SteamShortcutManager-x86_64.AppImage

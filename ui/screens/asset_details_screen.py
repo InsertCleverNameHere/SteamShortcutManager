@@ -1,17 +1,27 @@
 import os
-import shutil
-import threading
 from enum import Enum, auto
-from urllib.parse import urlparse
+from typing import Any
 
-import requests
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtGui import QPixmap
 
-from core.asset_provider import download_assets, search_steam_apps
+from core.asset_provider import download_assets
+from core.grid import (
+    SLOT_MAPPING,
+    delete_all_assets,
+    get_asset_status,
+    validate_image_bytes,
+    write_asset_atomic,
+)
 from core.log import get_logger
-from core.steam import get_asset_status
+from core.net import (
+    DEFAULT_TIMEOUT,
+    create_steam_session,
+    is_trusted_steam_url,
+    search_steam_store,
+)
 from core.vdf_parser import delete_shortcut, update_shortcut_icon, update_shortcut_name
+from ui.tasks import CancelToken, Task, TaskRunner
 from ui.theme import PALETTE, get_icon
 from ui.widgets.steam_guard import confirm_steam_closed
 
@@ -25,91 +35,63 @@ class SearchState(Enum):
     NOT_FOUND = auto()
 
 
-class SearchWorker(QtCore.QObject):
-    """Fetches a potential AppID match and its thumbnail in the background."""
+class SearchTask(Task):
+    """Fetches store search results and thumbnail securely."""
 
-    finished = QtCore.Signal(object, str, int)
-
-    def __init__(self, query, generation):
-        super().__init__()
+    def __init__(self, query: str):
         self.query = query
-        self.generation = generation
 
-    def run(self):
-        """Perform the search and thumbnail download."""
-        result = search_steam_apps(self.query)
+    def run(self, token: CancelToken) -> dict[str, Any]:
+        token.raise_if_cancelled()
+        res = search_steam_store(self.query)
+        token.raise_if_cancelled()
 
-        if isinstance(result, dict) and result.get("thumb_url"):
-            try:
-                url = result["thumb_url"]
-                if url.startswith("//"):
-                    url = "https:" + url
+        thumb_bytes = None
+        if res.status == "ok" and res.item and res.item.thumb_url:
+            url = res.item.thumb_url
+            if is_trusted_steam_url(url):
+                try:
+                    session = create_steam_session()
+                    r = session.get(url, timeout=DEFAULT_TIMEOUT)
+                    if r.status_code == 200:
+                        thumb_bytes = r.content
+                except Exception as e:
+                    logger.debug(f"Failed to fetch search thumbnail: {e}")
 
-                parsed = urlparse(url)
-                trusted_domains = (".steampowered.com", ".steamstatic.com")
-                if not parsed.netloc.endswith(trusted_domains):
-                    logger.warning(f"Blocked untrusted thumbnail URL: {url}")
-                    result["thumb_bytes"] = None
-                else:
-                    headers = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                    }
-                    resp = requests.get(url, headers=headers, timeout=5)
-
-                    if resp.status_code == 200:
-                        result["thumb_bytes"] = resp.content
-                    else:
-                        result["thumb_bytes"] = None
-            except Exception as e:
-                logger.warning(f"Thumbnail download error: {e}")
-                # Use .get() or check type before setting to be safe
-                if isinstance(result, dict):
-                    result["thumb_bytes"] = None
-
-        self.finished.emit(result, self.query, self.generation)
+        token.raise_if_cancelled()
+        return {
+            "status": res.status,
+            "item": res.item,
+            "thumb_bytes": thumb_bytes,
+            "error": res.error_message,
+        }
 
 
-class DownloadWorker(QtCore.QObject):
-    """Handles the heavy network lifting in a separate thread."""
+class DownloadTask(Task):
+    """Executes official asset download and atomic injection."""
 
-    finished = QtCore.Signal(bool, str, str, int)
-    status_update = QtCore.Signal(str)
-
-    def __init__(self, steam_id, local_id, grid_dir, force, generation):
-        super().__init__()
+    def __init__(
+        self,
+        steam_id: str,
+        local_id: str,
+        grid_dir: str,
+        force: bool,
+    ):
         self.steam_id = steam_id
         self.local_id = local_id
         self.grid_dir = grid_dir
         self.force = force
-        self.generation = generation
-        self._abort_event = threading.Event()
-        self._client_holder = [None]
 
-    def abort(self) -> None:
-        """
-        Signal the worker to stop and forcibly disconnect any active SteamClient.
-        Safe to call from the main thread at any time.
-        """
-        self._abort_event.set()
-        client = self._client_holder[0]
-        if client is not None:
-            try:
-                client.disconnect()
-            except Exception:
-                pass
-
-    def run(self):
-        # We pass the signal's emit function as the callback
+    def run(self, token: CancelToken) -> tuple[bool, str, str]:
         success, message = download_assets(
             self.steam_id,
             self.local_id,
             self.grid_dir,
-            self.force,
-            status_callback=self.status_update.emit,
-            abort_event=self._abort_event,
-            client_holder=self._client_holder,
+            force=self.force,
+            status_callback=token.report_progress,
+            abort_event=token,
         )
-        self.finished.emit(success, message, self.local_id, self.generation)
+        return success, message, self.local_id
 
 
 class AssetSlot(QtWidgets.QWidget):
@@ -217,35 +199,24 @@ class AssetDetailsScreen(QtWidgets.QWidget):
     back_requested = QtCore.Signal()
     name_changed = QtCore.Signal()
 
-    _active_threads = set()
-
     def _set_busy(self, is_busy: bool):
-        """Toggles the 'download in progress' UI state.
-
-        When busy:
-          - The Inject buttonls text changes into Cancel.
-          - Edit, Delete, and Force checkbox are disabled.
-        """
+        """Toggles the 'download in progress' UI state."""
         self._is_busy = is_busy
 
-        # These controls don't make sense mid-download
         self.delete_btn.setEnabled(not is_busy)
         self.edit_btn.setEnabled(not is_busy)
         self.force_cb.setEnabled(not is_busy)
-
-        # Disable and dim the Back button
         self.back_btn.setEnabled(not is_busy)
 
         if is_busy:
-            # Re-create the effect to make sure it stays alive for the next cycle
             self._back_dim_effect = QtWidgets.QGraphicsOpacityEffect(self)
             self._back_dim_effect.setOpacity(0.4)
             self.back_btn.setGraphicsEffect(self._back_dim_effect)
 
             # Swap Inject ↔ Cancel
             self.inject_btn.setText("✕ Cancel")
-            self.inject_btn.setEnabled(True)  # Make sure it's clickable
-            self.btn_opacity_effect.setOpacity(1.0)  # Make sure it's fully visible
+            self.inject_btn.setEnabled(True)
+            self.btn_opacity_effect.setOpacity(1.0)
             self.inject_btn.setStyleSheet(f"""
                 QPushButton {{
                     background-color: {PALETTE['danger']};
@@ -261,43 +232,20 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             """)
         else:
             self.back_btn.setGraphicsEffect(None)  # type: ignore
-
-            # Swap back Cancel ↔ Inject
             self.inject_btn.setText("↓ Inject from Steam")
             self.inject_btn.setStyleSheet("")
-            self._update_button_state()  # Let the app decide if it should be dim/disabled
-
-    def _on_thread_finished(self):
-        """Safely clears the thread reference after it is deleted."""
-        self._thread = None
-
-    def _on_search_thread_finished(self, thread_instance):
-        """Removes a thread from the registry once it has safely finished."""
-        AssetDetailsScreen._active_threads.discard(thread_instance)
-        if self._search_thread is thread_instance:
-            self._search_thread = None
-
-    def _on_download_thread_finished(self, thread_instance):
-        """Safely removes the download thread from the registry once it finishes."""
-        AssetDetailsScreen._active_threads.discard(thread_instance)
-        if getattr(self, "_thread", None) is thread_instance:
-            self._thread = None
+            self._update_button_state()
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # ALL state variables must be here
-        self._thread = None
-        self._search_thread = None
-        self._worker = None
+        self._task_runner = TaskRunner(self)
         self._suggested_steam_id = None
         self._current_appid: str = ""
         self._current_shortcuts_path = ""
         self._current_name = ""
-        self._search_generation = 0
         self._search_state = SearchState.IDLE
         self._all_assets_present = False
-        self._is_busy = False  # True while a DownloadWorker is running
-        self._download_generation = 0  # Download counter
+        self._is_busy = False
         self._build_ui()
 
     def _build_ui(self):
@@ -430,6 +378,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             border: 1px solid {PALETTE['accent']};
             border-radius: 6px;
         """)
+        self.title_edit.returnPressed.connect(self._toggle_edit_name)
         title_row.addWidget(self.title_edit)
 
         # The Edit/Save Button
@@ -499,17 +448,23 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self._status_fade_timer.timeout.connect(self._fade_out_status)
 
     def _on_back_clicked(self) -> None:
-        """Navigate back."""
+        """Cancels any running tasks, resets edit mode, and navigates back."""
+        self._reset_edit_mode()
+        self._task_runner.cancel_all()
         self.back_requested.emit()
 
+    def _reset_edit_mode(self) -> None:
+        """Ensures edit mode is cancelled and reset to view mode."""
+        if hasattr(self, "title_edit") and self.title_edit.isVisible():
+            self.title_edit.setVisible(False)
+            self.title_label.setVisible(True)
+            self.edit_btn.setIcon(get_icon("edit"))
+            self.edit_btn.setToolTip("Rename game")
+
     def _cancel_active_download(self) -> None:
-        """Abort worker and restore UI state immediately."""
-        if self._worker is not None:
-            self._worker.abort()
-        self._set_busy(False)
-        self.status_label.setText("Cancelled.")
-        self.status_opacity_effect.setOpacity(1.0)
-        self._status_fade_timer.start(2000)
+        """Requests cancellation of active download task."""
+        self.status_label.setText("Cancelling…")
+        self._task_runner.cancel("download")
 
     def _fade_out_status(self) -> None:
         self.status_anim = QtCore.QPropertyAnimation(
@@ -522,14 +477,12 @@ class AssetDetailsScreen(QtWidgets.QWidget):
 
     def _update_button_state(self):
         """Animates button and label states based on asset and search state."""
-        # Don't mess with button opacity if it's currently a Cancel button ---
         if getattr(self, "_is_busy", False):
             return
 
         can_inject = not self._all_assets_present or self.force_cb.isChecked()
         target_btn_opacity = 1.0 if can_inject else 0.3
 
-        # Use the Enum instead of probing label text
         is_searching = self._search_state == SearchState.SEARCHING
         is_matched = self._search_state == SearchState.FOUND
 
@@ -541,21 +494,17 @@ class AssetDetailsScreen(QtWidgets.QWidget):
 
         target_status_opacity = 1.0 if show_status else 0.0
 
-        # Only update text if we aren't in a searching/found state
-        # (those states manage their own text)
         if show_status and self._search_state == SearchState.IDLE:
             self.status_label.setText("✅ All assets present")
 
-        # 1. Animate Inject Button Opacity
         self.btn_anim = QtCore.QPropertyAnimation(
             self.btn_opacity_effect, b"opacity", self
         )
-        self.btn_anim.setDuration(250)  # milliseconds
+        self.btn_anim.setDuration(250)
         self.btn_anim.setEndValue(target_btn_opacity)
         self.btn_anim.setEasingCurve(QtCore.QEasingCurve.InOutQuad)
         self.btn_anim.start()
 
-        # 2. Animate Status Label Opacity
         self.status_anim = QtCore.QPropertyAnimation(
             self.status_opacity_effect, b"opacity", self
         )
@@ -564,11 +513,9 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self.status_anim.setEasingCurve(QtCore.QEasingCurve.InOutQuad)
         self.status_anim.start()
 
-        # Keep the actual functional state
         self.inject_btn.setEnabled(can_inject)
 
     def _on_inject_clicked(self):
-        # Route the button click to inject or cancel based on busy state
         if self._is_busy:
             self._cancel_active_download()
             return
@@ -576,17 +523,14 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         if not confirm_steam_closed(self):
             return
 
-        # 1. Determine Steam ID and Force state
         default_id = self._suggested_steam_id if self._suggested_steam_id else ""
         steam_id, ok = QtWidgets.QInputDialog.getText(
             self, "Inject Assets", "Enter Steam AppID:", text=default_id
         )
 
-        # Guard against cancellation or empty input
         if not (ok and steam_id):
             return
 
-        # Re-apply Sanitization and define 'force'
         steam_id = steam_id.strip()
         if not steam_id.isdigit():
             self.status_opacity_effect.setOpacity(1.0)
@@ -595,7 +539,6 @@ class AssetDetailsScreen(QtWidgets.QWidget):
 
         force = self.force_cb.isChecked()
 
-        # Defuse the timer and stop ghost animations
         if hasattr(self, "_status_fade_timer") and self._status_fade_timer.isActive():
             self._status_fade_timer.stop()
         if (
@@ -604,58 +547,31 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         ):
             self.status_anim.stop()
 
-        # UI Feedback
         self._set_busy(True)
         self.status_opacity_effect.setOpacity(1.0)
         self.status_label.setText("Initializing...")
 
-        # Setup Thread and Worker
-        self._thread = QtCore.QThread()
         grid_dir = os.path.join(os.path.dirname(self._current_shortcuts_path), "grid")
-        self._download_generation += 1
-        current_gen = self._download_generation
-        self._worker = DownloadWorker(
-            steam_id, self._current_appid, grid_dir, force, current_gen
+        task = DownloadTask(steam_id, self._current_appid, grid_dir, force)
+
+        self._task_runner.start(
+            task,
+            key="download",
+            on_result=self._on_download_finished,
+            on_error=self._on_download_error,
+            on_cancelled=self._on_download_cancelled,
+            on_progress=self.status_label.setText,
         )
-        self._worker.moveToThread(self._thread)
 
-        # Connect Signals
-        self._thread.started.connect(self._worker.run)
-        self._worker.status_update.connect(
-            self.status_label.setText
-        )  # Update text in real-time
-        self._worker.finished.connect(self._on_download_finished)
-        self._worker.finished.connect(self._thread.quit)
-        self._worker.finished.connect(self._worker.deleteLater)
-        self._thread.finished.connect(self._thread.deleteLater)
-        self._thread.finished.connect(
-            lambda t=self._thread: self._on_download_thread_finished(t)
-        )
-        AssetDetailsScreen._active_threads.add(self._thread)
-
-        self._thread.start()
-
-    def _on_download_finished(
-        self, success: bool, message: str, target_id: str, generation: int
-    ):
-        # Ignore signals from older, cancelled threads
-        if generation != getattr(self, "_download_generation", 0):
-            return
-        # Verify we are still viewing the same game
-        # Guard 1: result is for a game we navigated away from
+    def _on_download_finished(self, result: tuple[bool, str, str]):
+        success, message, target_id = result
         if str(target_id) != str(self._current_appid):
-            return
-
-        # Guard 2: the user already cancelled via _cancel_active_download.
-        # _is_busy was set to False there, so we silently discard this late result
-        # rather than showing a confusing error dialog.
-        if not self._is_busy:
             return
 
         self._set_busy(False)
         self.status_label.setText("")
+
         if success:
-            # If an official icon was downloaded, set it in shortcuts.vdf
             grid_dir = os.path.join(
                 os.path.dirname(self._current_shortcuts_path), "grid"
             )
@@ -667,38 +583,47 @@ class AssetDetailsScreen(QtWidgets.QWidget):
                     icon_candidate,
                 )
 
-            # Refresh the view to show new assets
             self.load_assets(
                 self._current_name, self._current_shortcuts_path, self._current_appid
             )
-            # Refresh Missing assets badges on new shortcut added
             self.name_changed.emit()
         else:
-            # "Cancelled" arrives here if abort() raced with the worker finishing
-            # naturally. Either way, no dialog is needed.
             QtWidgets.QMessageBox.critical(self, "Download Failed", message)
             self.status_opacity_effect.setOpacity(0.0)
 
-    def _on_search_finished(self, result, original_query, generation):
-        """Populates and fades in the smart suggestion bar."""
-        # Guard: If this is an orphaned result, ignore it
-        if generation != self._search_generation:
-            return
+    def _on_download_error(self, exc: Exception):
+        self._set_busy(False)
+        self.status_opacity_effect.setOpacity(0.0)
+        QtWidgets.QMessageBox.critical(
+            self, "Download Error", f"Download operation failed: {exc}"
+        )
 
-        if isinstance(result, dict):
+    def _on_download_cancelled(self):
+        self._set_busy(False)
+        self.status_label.setText("Cancelled.")
+        self.status_opacity_effect.setOpacity(1.0)
+        self._status_fade_timer.start(2000)
+
+    def _on_search_finished(self, data: dict[str, Any]):
+        status = data.get("status")
+        item = data.get("item")
+
+        if status == "ok" and item:
             self._search_state = SearchState.FOUND
-            self._suggested_steam_id = result["id"]
-            self.suggestion_text.setText(result["id"])
+            self._suggested_steam_id = item.appid
+            self.suggestion_text.setText(item.appid)
 
-            if result.get("thumb_bytes"):
+            thumb_bytes = data.get("thumb_bytes")
+            if thumb_bytes:
                 pix = QPixmap()
-                if pix.loadFromData(result["thumb_bytes"]):
+                if pix.loadFromData(thumb_bytes):
                     self.suggestion_thumb.setPixmap(pix)
                     self.suggestion_thumb.show()
                 else:
                     self.suggestion_thumb.hide()
+            else:
+                self.suggestion_thumb.hide()
 
-            # Use self as parent to prevent GC mid-animation
             self.suggest_anim = QtCore.QPropertyAnimation(
                 self.suggestion_opacity, b"opacity", self
             )
@@ -708,20 +633,27 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             self.suggest_anim.start()
 
             self.status_label.setText("💡 Found Steam Match")
-        elif result == "ERR_NETWORK":
+        elif status == "error":
             self._search_state = SearchState.NOT_FOUND
             self._suggested_steam_id = None
             self.status_label.setText("🌐 Search failed - check connection")
-
         else:
             self._search_state = SearchState.NOT_FOUND
             self._suggested_steam_id = None
             self.status_label.setText("❓ No match found")
-        # Refresh visibility now that state changed
+
+        self._update_button_state()
+
+    def _on_search_error(self, exc: Exception):
+        self._search_state = SearchState.NOT_FOUND
+        self._suggested_steam_id = None
+        self.status_label.setText("🌐 Search failed - check connection")
         self._update_button_state()
 
     def load_assets(self, game_name, shortcuts_path, appid):
-        # 1. Improved new game detection with string conversion
+        # Defuse any active rename edit state immediately
+        self._reset_edit_mode()
+
         current_id = getattr(self, "_current_appid", None)
         is_new_game = str(appid) != str(current_id)
 
@@ -733,8 +665,12 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         if is_new_game:
             self._trigger_search(game_name)
 
-        status = get_asset_status(shortcuts_path, appid)
-        self._all_assets_present = all(exists for exists, path in status.values())
+        grid_dir = os.path.join(os.path.dirname(shortcuts_path), "grid")
+        status = get_asset_status(grid_dir, appid)
+        # Visual assets + JSON required for complete check
+        self._all_assets_present = all(
+            status[slot][0] for slot in ("capsule", "header", "hero", "logo", "json")
+        )
 
         for key, (exists, path) in status.items():
             if key in self._asset_slots:
@@ -743,8 +679,6 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self._update_button_state()
 
     def _toggle_edit_name(self):
-
-        # Case: Transitioning from View to Edit
         if not self.title_edit.isVisible():
             if not confirm_steam_closed(self):
                 return
@@ -755,8 +689,6 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             self.edit_btn.setIcon(get_icon("check"))
             self.edit_btn.setToolTip("Save new name")
             self.title_edit.setFocus()
-
-        # Case: Finalizing Changes (Transitioning from Edit to View)
         else:
             new_name = self.title_edit.text().strip()
             if self._current_appid and new_name and new_name != self._current_name:
@@ -777,12 +709,9 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             self.edit_btn.setToolTip("Rename game")
 
     def _trigger_search(self, game_name):
-        """Triggers a background Steam search for the given name."""
-        # Visual/Animation Reset
         if hasattr(self, "suggest_anim"):
             self.suggest_anim.stop()
 
-        # Defuse the timer and stop ghost animations
         if hasattr(self, "_status_fade_timer") and self._status_fade_timer.isActive():
             self._status_fade_timer.stop()
         if (
@@ -796,42 +725,17 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self.suggestion_thumb.setPixmap(QPixmap())
         self._suggested_steam_id = None
 
-        # Thread Management: Handle existing search task
-        if self._search_thread and self._search_thread.isRunning():
-            try:
-                # Disconnect UI slots so the old thread cannot update this screen
-                self._search_thread.worker.finished.disconnect(self._on_search_finished)
-            except (AttributeError, TypeError, RuntimeError) as e:
-                logger.debug(f"Signal disconnect error: {e}")
-            # Move to registry so Python doesn't delete the C++ object mid-run
-            AssetDetailsScreen._active_threads.add(self._search_thread)
-
         self._search_state = SearchState.SEARCHING
-        self._search_generation += 1
-        current_gen = self._search_generation
         self.status_opacity_effect.setOpacity(1.0)
         self.status_label.setText("🔍 Searching Steam...")
 
-        # Create the new thread and worker
-        new_thread = QtCore.QThread()
-        worker = SearchWorker(game_name, current_gen)
-        new_thread.worker = worker
-        worker.moveToThread(new_thread)
-
-        new_thread.started.connect(worker.run)
-        worker.finished.connect(self._on_search_finished)
-        worker.finished.connect(new_thread.quit)
-        worker.finished.connect(worker.deleteLater)
-        new_thread.finished.connect(new_thread.deleteLater)
-
-        # Cleanup: Remove from registry and clear reference on finish
-        new_thread.finished.connect(
-            lambda t=new_thread: self._on_search_thread_finished(t)
+        # Keyed execution: starting "search" supersedes any pending search task
+        self._task_runner.start(
+            SearchTask(game_name),
+            key="search",
+            on_result=self._on_search_finished,
+            on_error=self._on_search_error,
         )
-        AssetDetailsScreen._active_threads.add(new_thread)
-
-        self._search_thread = new_thread
-        self._search_thread.start()
 
     def _on_delete_clicked(self):
         if not self._current_appid:
@@ -840,7 +744,6 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         if not confirm_steam_closed(self):
             return
 
-        # 1. Primary Confirmation
         reply = QtWidgets.QMessageBox.question(
             self,
             "Confirm Deletion",
@@ -851,7 +754,6 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         if reply == QtWidgets.QMessageBox.No:
             return
 
-        # 2. Asset Cleanup Option
         clean_assets = QtWidgets.QMessageBox.question(
             self,
             "Cleanup Assets",
@@ -861,41 +763,27 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         )
 
         vdf_path = self._current_shortcuts_path
-
-        # 3. Perform Deletion in VDF
         success, msg = delete_shortcut(vdf_path, self._current_appid)
 
         if success:
-            # 4. Asset File Cleanup
             if clean_assets == QtWidgets.QMessageBox.Yes:
                 grid_dir = os.path.join(os.path.dirname(vdf_path), "grid")
-                # Clean all artwork and icon patterns including .jpeg
-                for suffix in ["p", "", "_hero", "_logo", "_icon"]:
-                    for ext in [".jpg", ".png", ".jpeg", ".json", ".ico"]:
-                        target_file = os.path.join(
-                            grid_dir, f"{self._current_appid}{suffix}{ext}"
-                        )
-                        if os.path.exists(target_file):
-                            try:
-                                os.remove(target_file)
-                            except Exception as e:
-                                logger.warning(f"Could not delete {target_file}: {e}")
-            # 5. Finalize and Exit
-            self.name_changed.emit()  # Refresh the main list
-            self.back_requested.emit()  # Go back to the list automatically
+                # Unified deletion cleaning all extensions and JSON
+                delete_all_assets(grid_dir, self._current_appid)
+
+            self.name_changed.emit()
+            self._reset_edit_mode()
+            self.back_requested.emit()
         else:
             QtWidgets.QMessageBox.critical(self, "Error", msg)
 
     def _on_manual_upload(self, asset_type):
-        """Opens a file dialog and copies a local image to the Steam grid folder."""
         if asset_type == "json":
-            # Skip JSON
             return
 
         if not confirm_steam_closed(self):
             return
 
-        # 1. Pick the file
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
             f"Select {asset_type.capitalize()}",
@@ -905,40 +793,33 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         if not file_path:
             return
 
-        # 2. Determine target filename based on asset type
-        # Patterns: capsule='p', header='', hero='_hero', logo='_logo'
-        suffix_map = {"capsule": "p", "header": "", "hero": "_hero", "logo": "_logo"}
-
+        suffix = SLOT_MAPPING.get(asset_type, ("", ""))[0]
         ext = os.path.splitext(file_path)[1].lower()
-        new_filename = f"{self._current_appid}{suffix_map[asset_type]}{ext}"
-        grid_dir = os.path.join(os.path.dirname(self._current_shortcuts_path), "grid")
-        dest_path = os.path.join(grid_dir, new_filename)
 
         try:
-            # Ensure grid directory exists on fresh profiles before copying
-            os.makedirs(grid_dir, exist_ok=True)
+            with open(file_path, "rb") as f:
+                content = f.read()
 
-            # Delete existing assets with other file extensions
-            for existing_ext in [".jpg", ".png", ".jpeg"]:
-                potential_old_file = os.path.join(
-                    grid_dir,
-                    f"{self._current_appid}{suffix_map[asset_type]}{existing_ext}",
+            if not validate_image_bytes(content, ext):
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Invalid Image",
+                    f"The selected file is not a valid {ext.upper()} image file.",
                 )
-                if os.path.exists(potential_old_file):
-                    try:
-                        os.remove(potential_old_file)
-                    except Exception as e:
-                        logger.warning(f"Could not remove old asset: {e}")
+                return
 
-            # 3. Copy and Overwrite
-            shutil.copy2(file_path, dest_path)
+            grid_dir = os.path.join(
+                os.path.dirname(self._current_shortcuts_path), "grid"
+            )
+            # Atomic replacement with sibling extension pruning
+            write_asset_atomic(grid_dir, self._current_appid, suffix, ext, content)
 
-            # 4. Refresh UI to show the new asset
             self.load_assets(
                 self._current_name, self._current_shortcuts_path, self._current_appid
             )
+            self.name_changed.emit()
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(
-                self, "Upload Error", f"Failed to copy file: {e}"
+                self, "Upload Error", f"Failed to upload asset: {e}"
             )
