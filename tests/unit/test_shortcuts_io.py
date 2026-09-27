@@ -1,11 +1,13 @@
 import os
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 import vdf
 
-from core.appid import normalize_appid
+from core.appid import normalize_appid, to_uint32
+from core.platform.linux import LinuxPlatform
 from core.shortcuts_io import (
     ShortcutsFileError,
     ShortcutsTransaction,
@@ -22,7 +24,7 @@ from core.shortcuts_io import (
 
 
 def test_load_shortcuts_strict_rejects_corrupted_file(tmp_path: Path):
-    """Audit 3.2 #1: Strict load must raise ShortcutsFileError on corrupted data."""
+    """Strict load must raise ShortcutsFileError on corrupted data."""
     bad_file = tmp_path / "corrupted.vdf"
     bad_file.write_bytes(b"\x00\x01\xffGARBAGE_BYTES_THAT_CANNOT_PARSE")
 
@@ -31,7 +33,7 @@ def test_load_shortcuts_strict_rejects_corrupted_file(tmp_path: Path):
 
 
 def test_create_backup_rotation(tmp_path: Path):
-    """Audit 3.2 #1: Rotating backups must keep at most max_backups."""
+    """Rotating backups must keep at most max_backups."""
     vdf_file = tmp_path / "shortcuts.vdf"
     vdf_file.write_bytes(b"\x00shortcuts\x00\x08\x08")
 
@@ -97,7 +99,7 @@ def test_transaction_rolls_back_on_caller_exception(tmp_path: Path):
 
 
 def test_update_shortcut_name_preserves_case():
-    """Audit 3.2 #8: Renaming must not duplicate keys when file uses lowercase 'appname'."""
+    """Renaming must not duplicate keys when file uses lowercase 'appname'."""
     data = {
         "shortcuts": {
             "0": {
@@ -217,7 +219,7 @@ def test_transaction_verification_failure_restores_backup_atomically(tmp_path: P
 
 
 def test_transaction_verification_failure_no_prior_file_cleans_up(tmp_path: Path):
-    """Verify that when no prior file existed, a verification failure purges the file (F34)."""
+    """Verify that when no prior file existed, a verification failure purges the file."""
     vdf_file = tmp_path / "new_profile" / "shortcuts.vdf"
 
     call_count = 0
@@ -237,3 +239,35 @@ def test_transaction_verification_failure_no_prior_file_cleans_up(tmp_path: Path
 
     # Corrupt file must be purged; no broken file left on disk
     assert not vdf_file.exists()
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="Linux-specific POSIX data path formatting"
+)
+def test_linux_data_path_formatting(tmp_path: Path):
+    """
+    Verify Linux data path rules:
+    - Exe: Linux-visible path in double quotes
+    - StartDir: Directory with trailing slash, unquoted
+    - icon: Empty by default
+    - grid filename ID: to_uint32(signed_appid)
+    """
+    linux_platform = LinuxPlatform()
+    data = {"shortcuts": {}}
+    exe_path = "/var/home/linuxiscool/Games/Doom/doom.exe"
+
+    with patch("core.shortcuts_io.get_platform", return_value=linux_platform):
+        unsigned_id_str, entry = add_shortcut(data, "Doom Eternal", exe_path)
+
+    # 1. Exe must be quoted Linux-visible path
+    assert entry["Exe"] == f'"{exe_path}"'
+
+    # 2. StartDir must be unquoted directory with trailing /
+    assert entry["StartDir"] == "/var/home/linuxiscool/Games/Doom/"
+
+    # 3. icon must be empty by default
+    assert entry["icon"] == ""
+
+    # 4. Grid filename ID matches to_uint32
+    signed_id = entry["appid"]
+    assert str(to_uint32(signed_id)) == unsigned_id_str

@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from core.platform.base import PlatformServices, SteamInstall
+from core.platform.linux import LinuxPlatform
+from core.platform.windows import WindowsPlatform
 
 
 def test_steam_install_dataclass():
@@ -12,35 +14,10 @@ def test_steam_install_dataclass():
     assert install.label == "Steam (Native)"
 
 
-def test_platform_services_protocol_conformance():
-    class DummyPlatform:
-        name = "dummy"
-        droppable_extensions = (".exe",)
-        file_dialog_filter = "All Files (*.*)"
+def test_production_platforms_satisfy_protocol():
+    """Verify that both production platform classes satisfy PlatformServices."""
+    linux_platform = LinuxPlatform()
+    windows_platform = WindowsPlatform()
 
-        def discover_steam_installs(self):
-            return []
-
-        def is_valid_steam_dir(self, path):
-            return True
-
-        def is_steam_running(self, install=None):
-            return False
-
-        def request_steam_shutdown(self, install=None):
-            return True
-
-        def format_start_dir(self, exe_path):
-            return "/dir/"
-
-        def steam_dir_placeholder(self):
-            return "/path"
-
-        def is_sandboxed(self):
-            return False
-
-        def path_warnings(self, exe_path, install=None):
-            return []
-
-    dummy = DummyPlatform()
-    assert isinstance(dummy, PlatformServices)
+    assert isinstance(linux_platform, PlatformServices)
+    assert isinstance(windows_platform, PlatformServices)

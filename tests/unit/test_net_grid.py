@@ -197,3 +197,45 @@ def test_delete_all_assets(tmp_path: Path):
     deleted_count = delete_all_assets(tmp_path, appid)
     assert deleted_count >= 7
     assert len(list(tmp_path.iterdir())) == 0
+
+
+def test_asset_status_detects_jpeg_extension(tmp_path: Path):
+    """Verify that JPEG files are recognized and populated in asset status."""
+    from core.steam import get_asset_status
+
+    userdata_dir = tmp_path / "userdata" / "12345" / "config"
+    grid_dir = userdata_dir / "grid"
+    grid_dir.mkdir(parents=True)
+
+    shortcuts_vdf = userdata_dir / "shortcuts.vdf"
+    shortcuts_vdf.touch()
+
+    appid = "3836504666"
+
+    capsule = grid_dir / f"{appid}p.jpeg"
+    capsule.write_bytes(b"dummy_image_data")
+    header = grid_dir / f"{appid}.jpeg"
+    header.write_bytes(b"dummy_image_data")
+
+    status = get_asset_status(str(shortcuts_vdf), appid)
+
+    assert status["capsule"][0] is True
+    assert status["capsule"][1] == str(capsule)
+    assert status["header"][0] is True
+    assert status["header"][1] == str(header)
+    assert status["hero"][0] is False
+
+
+def test_shortcut_list_asset_complete_recognizes_jpeg():
+    """Verify that _asset_complete recognizes JPEG files for all artwork slots."""
+    from ui.screens.shortcut_list_screen import ShortcutListScreen
+
+    appid = "3836504666"
+    grid_files = {
+        f"{appid}p.jpeg",
+        f"{appid}.jpeg",
+        f"{appid}_hero.jpeg",
+        f"{appid}_logo.jpeg",
+        f"{appid}.json",
+    }
+    assert ShortcutListScreen._asset_complete(appid, grid_files) is True

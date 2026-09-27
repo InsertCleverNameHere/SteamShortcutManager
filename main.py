@@ -129,16 +129,6 @@ from ui.screens.shortcut_list_screen import ShortcutListScreen
 from ui.theme import APP_STYLESHEET, get_app_icon, load_bundled_fonts
 
 
-def get_resource_path(relative_path):
-    """Get absolute path to resource, works for dev and for PyInstaller"""
-    try:
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
-
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()

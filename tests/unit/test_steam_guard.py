@@ -1,4 +1,12 @@
+"""
+tests/unit/test_steam_guard.py
+Unit tests for the Steam-running guard dialog (ui/widgets/steam_guard.py).
+Tests running detection, session suppression, and graceful shutdown polling.
+"""
+
 from unittest.mock import MagicMock, patch
+
+from PySide6 import QtWidgets
 
 from ui.widgets.steam_guard import confirm_steam_closed, reset_session_warning
 
@@ -13,7 +21,7 @@ def test_confirm_steam_closed_returns_true_when_not_running(qtbot):
 
 
 def test_confirm_steam_closed_warns_once_per_session_when_unknown(qtbot):
-    """When running status is unknown (None), warn once per session then proceed silently."""
+    """When running status is indeterminate (None), warn once per session then proceed silently."""
     reset_session_warning()
     mock_platform = MagicMock()
     mock_platform.is_steam_running.return_value = None
@@ -33,8 +41,6 @@ def test_confirm_steam_closed_warns_once_per_session_when_unknown(qtbot):
 
 def test_confirm_steam_closed_polling_requires_explicit_false(qtbot):
     """Verify shutdown polling loop waits for explicit False and does not exit on indeterminate status."""
-    from PySide6 import QtWidgets
-
     mock_platform = MagicMock()
     # 1st call: True (prompts dialog)
     # 2nd call: None (indeterminate, must continue waiting)
