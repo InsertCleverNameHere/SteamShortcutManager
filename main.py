@@ -134,7 +134,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         setup_logging()  # Ensure app.log is created on startup
         self.setWindowTitle("Steam Shortcut Manager")
-        self.resize(800, 700)
+        self.resize(720, 580)
+        self.setMinimumSize(670, 540)
         app_icon = get_app_icon()
         if not app_icon.isNull():
             self.setWindowIcon(app_icon)

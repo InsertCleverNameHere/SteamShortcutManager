@@ -47,3 +47,22 @@ def test_windows_path_warnings_installer():
 
     no_warnings = platform.path_warnings(r"C:\Games\Doom\doom.exe")
     assert len(no_warnings) == 0
+
+
+def test_windows_open_folder(tmp_path: Path):
+    platform = WindowsPlatform()
+
+    # Non-existent directory returns False
+    assert platform.open_folder(tmp_path / "nonexistent") is False
+
+    # Existing directory invokes os.startfile
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+
+    with patch("os.startfile", create=True) as mock_startfile:
+        assert platform.open_folder(target_dir) is True
+        mock_startfile.assert_called_once_with(str(target_dir.resolve()))
+
+    # Exception in os.startfile returns False
+    with patch("os.startfile", side_effect=OSError("Boom"), create=True):
+        assert platform.open_folder(target_dir) is False

@@ -177,6 +177,31 @@ APP_STYLESHEET = f"""
         border: 1px solid {PALETTE['accent']};
         /* We'll use a simple Unicode-like checkmark style via border/background */
     }}
+
+    QMenu {{
+        background-color: {PALETTE['bg_card']};
+        color: {PALETTE['text_primary']};
+        border: 1px solid {PALETTE['border']};
+        border-radius: 8px;
+        padding: 4px;
+    }}
+
+    QMenu::item {{
+        padding: 6px 24px 6px 12px;
+        border-radius: 4px;
+        font-size: 13px;
+    }}
+
+    QMenu::item:selected {{
+        background-color: {PALETTE['bg_card_hover']};
+        color: {PALETTE['text_primary']};
+    }}
+
+    QMenu::separator {{
+        height: 1px;
+        background: {PALETTE['border']};
+        margin: 4px 6px;
+    }}
 """
 
 

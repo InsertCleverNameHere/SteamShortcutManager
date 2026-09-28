@@ -179,3 +179,36 @@ def test_linux_is_steam_running_sandboxed_inconclusive_returns_none(tmp_path: Pa
                     platform, "_read_registry_vdf_active", return_value=None
                 ):
                     assert platform.is_steam_running() is None
+
+
+def test_linux_open_folder(tmp_path: Path):
+    platform = LinuxPlatform()
+
+    # Non-existent directory returns False
+    assert platform.open_folder(tmp_path / "nonexistent") is False
+
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+
+    # Test sanitized environment stripping
+    env_patch = {
+        "PYTHONHOME": "/tmp/appimage_py",
+        "APPIMAGE": "/path/to/app.AppImage",
+        "LD_LIBRARY_PATH": "/tmp/.mount_1234/lib:/usr/lib",
+    }
+    with patch.dict(os.environ, env_patch):
+        with patch("subprocess.Popen") as mock_popen:
+            assert platform.open_folder(target_dir) is True
+            mock_popen.assert_called_once()
+            args, kwargs = mock_popen.call_args
+            assert args[0] == ["xdg-open", str(target_dir.resolve())]
+            assert kwargs.get("start_new_session") is True
+
+            passed_env = kwargs.get("env", {})
+            assert "PYTHONHOME" not in passed_env
+            assert "APPIMAGE" not in passed_env
+            assert passed_env.get("LD_LIBRARY_PATH") == "/usr/lib"
+
+    # Exception during launch returns False cleanly
+    with patch("subprocess.Popen", side_effect=OSError("Boom")):
+        assert platform.open_folder(target_dir) is False

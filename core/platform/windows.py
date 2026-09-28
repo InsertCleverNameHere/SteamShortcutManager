@@ -125,6 +125,16 @@ class WindowsPlatform(PlatformServices):
     def steam_dir_placeholder(self) -> str:
         return r"C:\Program Files (x86)\Steam"
 
+    def open_folder(self, path: Path | str) -> bool:
+        target = Path(path).resolve()
+        if not target.is_dir():
+            return False
+        try:
+            os.startfile(str(target))
+            return True
+        except Exception:
+            return False
+
     def is_sandboxed(self) -> bool:
         return False
 
