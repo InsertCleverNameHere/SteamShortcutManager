@@ -202,6 +202,51 @@ APP_STYLESHEET = f"""
         background: {PALETTE['border']};
         margin: 4px 6px;
     }}
+
+    QDialog {{
+        background-color: {PALETTE['bg_deep']};
+    }}
+
+    QTableWidget {{
+        background-color: {PALETTE['bg_surface']};
+        color: {PALETTE['text_primary']};
+        border: 1px solid {PALETTE['border']};
+        border-radius: 6px;
+        gridline-color: transparent;
+        selection-background-color: {PALETTE['bg_card_sel']};
+        selection-color: {PALETTE['text_primary']};
+        outline: none;
+    }}
+
+    QTableWidget::item {{
+        padding: 6px 10px;
+        border-bottom: 1px solid rgba(46, 51, 64, 0.4);
+    }}
+
+    QTableWidget::item:hover {{
+        background-color: {PALETTE['bg_card_hover']};
+    }}
+
+    QTableWidget::item:selected {{
+        background-color: {PALETTE['bg_card_sel']};
+    }}
+
+    QHeaderView::section {{
+        background-color: {PALETTE['bg_card']};
+        color: {PALETTE['text_secondary']};
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 1px;
+        padding: 8px 10px;
+        border: none;
+        border-bottom: 1px solid {PALETTE['border']};
+        outline: none;
+    }}
+
+    QTableCornerButton::section {{
+        background-color: {PALETTE['bg_card']};
+        border: none;
+    }}
 """
 
 

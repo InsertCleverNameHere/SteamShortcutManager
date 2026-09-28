@@ -12,6 +12,7 @@ from core.platform import get_platform
 from core.shortcuts_io import ShortcutsFileError, get_available_backups, restore_backup
 from ui.tasks import CancelToken, Task, TaskRunner
 from ui.theme import PALETTE, get_icon
+from ui.widgets.batch_add_dialog import BatchAddDialog
 from ui.widgets.steam_guard import confirm_steam_closed
 
 logger = get_logger("shortcut_list_screen")
@@ -34,6 +35,101 @@ class ResolveShortcutTask(Task):
             derived_name = get_game_name_from_pe(exe_path)
         token.raise_if_cancelled()
         return self.raw_path, exe_path, derived_name
+
+
+class AddShortcutPromptDialog(QtWidgets.QDialog):
+    """
+    Focused prompt dialog for naming a shortcut.
+    Supports instant fast-path addition (Enter) and '+ Add Another' pivot to batch mode.
+    """
+
+    ACTION_ADD = 1
+    ACTION_ADD_ANOTHER = 2
+    ACTION_CANCEL = 0
+
+    def __init__(
+        self,
+        parent: QtWidgets.QWidget | None,
+        derived_name: str,
+        exe_path: str,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle("Add Shortcut")
+        self.setFixedWidth(440)
+        self.result_action = self.ACTION_CANCEL
+        self.game_name = derived_name
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        title_lbl = QtWidgets.QLabel("Add Shortcut")
+        title_lbl.setStyleSheet(
+            f"font-size: 16px; font-weight: 700; color: {PALETTE['text_primary']};"
+        )
+        layout.addWidget(title_lbl)
+
+        path_lbl = QtWidgets.QLabel(exe_path)
+        path_lbl.setStyleSheet(
+            f"font-size: 11px; color: {PALETTE['text_muted']};"
+        )
+        path_lbl.setWordWrap(True)
+        layout.addWidget(path_lbl)
+
+        name_lbl = QtWidgets.QLabel("Game name:")
+        name_lbl.setStyleSheet(
+            f"font-size: 12px; font-weight: 600; color: {PALETTE['text_secondary']};"
+        )
+        layout.addWidget(name_lbl)
+
+        self.name_edit = QtWidgets.QLineEdit(derived_name)
+        self.name_edit.selectAll()
+        self.name_edit.returnPressed.connect(self._on_add)
+        layout.addWidget(self.name_edit)
+
+        layout.addSpacing(6)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.setSpacing(8)
+
+        self.add_another_btn = QtWidgets.QPushButton("+ Add Another")
+        self.add_another_btn.setObjectName("secondary")
+        self.add_another_btn.setToolTip(
+            "Add multiple games across different folders"
+        )
+        self.add_another_btn.clicked.connect(self._on_add_another)
+        btn_row.addWidget(self.add_another_btn)
+
+        btn_row.addStretch()
+
+        self.cancel_btn = QtWidgets.QPushButton("Cancel")
+        self.cancel_btn.setObjectName("secondary")
+        self.cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(self.cancel_btn)
+
+        self.add_btn = QtWidgets.QPushButton("Add Shortcut")
+        self.add_btn.setDefault(True)
+        self.add_btn.clicked.connect(self._on_add)
+        btn_row.addWidget(self.add_btn)
+
+        layout.addLayout(btn_row)
+        self.name_edit.setFocus()
+
+    def _on_add(self):
+        name = self.name_edit.text().strip()
+        if not name:
+            return
+        self.game_name = name
+        self.result_action = self.ACTION_ADD
+        self.accept()
+
+    def _on_add_another(self):
+        name = self.name_edit.text().strip()
+        if not name:
+            return
+        self.game_name = name
+        self.result_action = self.ACTION_ADD_ANOTHER
+        self.accept()
 
 
 class ShortcutListScreen(QtWidgets.QWidget):
@@ -393,15 +489,33 @@ class ShortcutListScreen(QtWidgets.QWidget):
             )
 
     def _on_add_clicked(self):
-        raw_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+        files, _ = QtWidgets.QFileDialog.getOpenFileNames(
             self,
             "Select Game",
             "",
             get_platform().file_dialog_filter,
         )
-        if not raw_path:
+        if not files:
             return
-        self._start_add_from_path(os.path.normpath(raw_path))
+
+        if len(files) == 1:
+            self._start_add_from_path(os.path.normpath(files[0]))
+        else:
+            # Multi-file selected directly in browse dialog
+            if not confirm_steam_closed(self):
+                return
+            install = (
+                self._current_user_obj.install
+                if self._current_user_obj
+                else None
+            )
+            dlg = BatchAddDialog(
+                self,
+                initial_paths=[os.path.normpath(f) for f in files],
+                install=install,
+            )
+            if dlg.exec() == QtWidgets.QDialog.Accepted:
+                self._commit_batch_shortcuts(dlg.get_selected_shortcuts())
 
     def _start_add_from_path(self, raw_path: str):
         """
@@ -422,9 +536,13 @@ class ShortcutListScreen(QtWidgets.QWidget):
         self._task_runner.start(
             ResolveShortcutTask(raw_path),
             key="resolve_shortcut",
-            on_result=lambda res: self._on_shortcut_resolved(*res),
+            on_result=self._on_resolve_success,
             on_error=self._on_resolve_error,
         )
+
+    def _on_resolve_success(self, res: tuple[str, str | None, str]):
+        """Dispatches resolved metadata unpack on the main GUI thread."""
+        self._on_shortcut_resolved(*res)
 
     def _on_resolve_error(self, exc: Exception):
         """Handles resolution errors and guarantees buttons re-enable."""
@@ -544,31 +662,64 @@ class ShortcutListScreen(QtWidgets.QWidget):
             if reply != QtWidgets.QMessageBox.Yes:
                 return
 
-        game_name, ok = QtWidgets.QInputDialog.getText(
-            self, "Add Shortcut", "Enter game name:", text=derived_name
-        )
+        prompt = AddShortcutPromptDialog(self, derived_name, exe_path)
+        if prompt.exec() != QtWidgets.QDialog.Accepted:
+            return
 
-        if ok and game_name:
+        if prompt.result_action == AddShortcutPromptDialog.ACTION_ADD:
+            game_name = prompt.game_name
             vdf_path = self._current_user_obj.shortcuts_path
 
-            # Save to VDF (icon left empty by default
             success, msg, new_id = vdf_parser.add_new_shortcut(
                 vdf_path, game_name, exe_path
             )
 
             if success:
-                # Manually update the data object's count
                 if self._current_user_obj:
                     self._current_user_obj.shortcut_count += 1
-                    # Signal the LibraryScreen (UserCard) to refresh its label
                     self.user_updated.emit()
 
-                # Rebuild the local list of shortcut cards to include the new game
                 self.load_user_shortcuts(self._current_user_obj)
-                # Redirect to details
                 self.shortcut_clicked.emit(game_name, vdf_path, new_id)
             else:
                 QtWidgets.QMessageBox.critical(self, "Error", msg)
+
+        elif prompt.result_action == AddShortcutPromptDialog.ACTION_ADD_ANOTHER:
+            install = (
+                self._current_user_obj.install
+                if self._current_user_obj
+                else None
+            )
+            dlg = BatchAddDialog(self, install=install)
+            dlg.add_executable(raw_path, custom_name=prompt.game_name)
+            # Immediately open browse for game 2
+            dlg._on_browse_clicked()
+
+            if dlg.exec() == QtWidgets.QDialog.Accepted:
+                self._commit_batch_shortcuts(dlg.get_selected_shortcuts())
+
+    def _commit_batch_shortcuts(self, selected: list[tuple[str, str]]):
+        """Commits multiple shortcuts in a single transaction and refreshes the UI."""
+        if not selected or not self._current_user_obj:
+            return
+
+        vdf_path = self._current_user_obj.shortcuts_path
+        success, msg, added_ids = vdf_parser.add_new_shortcuts_batch(
+            vdf_path, selected
+        )
+
+        if success:
+            count = len(added_ids)
+            self._current_user_obj.shortcut_count += count
+            self.user_updated.emit()
+            self.load_user_shortcuts(self._current_user_obj)
+            QtWidgets.QMessageBox.information(
+                self,
+                "Shortcuts Added",
+                f"Successfully added {count} shortcut{'s' if count != 1 else ''} to your Steam Library.",
+            )
+        else:
+            QtWidgets.QMessageBox.critical(self, "Error", msg)
 
     @staticmethod
     def _asset_complete(appid: str, grid_files: set) -> bool:
