@@ -58,7 +58,7 @@ def load_shortcuts(path: str | Path, strict: bool = True) -> dict:
     return data
 
 
-def create_backup(shortcuts_path: str | Path, max_backups: int = 10) -> Path | None:
+def create_backup(shortcuts_path: str | Path, max_backups: int = 15) -> Path | None:
     """
     Creates a timestamped backup inside an 'ssm-backups' subfolder.
     Prunes older backups to keep at most max_backups files.

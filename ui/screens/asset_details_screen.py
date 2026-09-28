@@ -102,7 +102,7 @@ class AssetSlot(QtWidgets.QWidget):
     def __init__(self, key, parent=None):
         super().__init__(parent)
         self.key = key
-        self.setFixedWidth(320)
+        self.setFixedWidth(300)
         self.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Preferred)
         self.setCursor(QtCore.Qt.PointingHandCursor)
         self.setToolTip(f"Click to manually upload {key.upper()}")
@@ -153,7 +153,7 @@ class AssetSlot(QtWidgets.QWidget):
                 if not pix.isNull():
                     # High-DPI / Wayland fractional scaling: scale at physical pixel resolution
                     dpr = self.devicePixelRatio()
-                    target_w = int(320 * dpr)
+                    target_w = int(300 * dpr)
                     target_h = int(160 * dpr)
                     scaled_pix = pix.scaled(
                         target_w,
@@ -232,7 +232,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             """)
         else:
             self.back_btn.setGraphicsEffect(None)  # type: ignore
-            self.inject_btn.setText("↓ Inject from Steam")
+            self.inject_btn.setText("↓ Inject Assets")
             self.inject_btn.setStyleSheet("")
             self._update_button_state()
 
@@ -266,7 +266,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         # Smart Suggestion Badge
         self.suggestion_widget = QtWidgets.QFrame()
         self.suggestion_widget.setFixedHeight(35)
-        self.suggestion_widget.setFixedWidth(165)
+        self.suggestion_widget.setFixedWidth(135)
         self.suggestion_widget.setStyleSheet(f"""
             QFrame {{
                 background: {PALETTE['bg_card']};
@@ -275,11 +275,11 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             }}
         """)
         self.suggestion_layout = QtWidgets.QHBoxLayout(self.suggestion_widget)
-        self.suggestion_layout.setContentsMargins(4, 0, 10, 0)
-        self.suggestion_layout.setSpacing(8)
+        self.suggestion_layout.setContentsMargins(4, 0, 8, 0)
+        self.suggestion_layout.setSpacing(6)
 
         self.suggestion_thumb = QtWidgets.QLabel()
-        self.suggestion_thumb.setFixedSize(80, 28)
+        self.suggestion_thumb.setFixedSize(65, 28)
         self.suggestion_thumb.setScaledContents(True)
         self.suggestion_thumb.setStyleSheet(
             "background: #000; border-right: 1px solid #2e3340;"
@@ -307,8 +307,8 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             f"color: {PALETTE['text_primary']}; font-size: 11px; font-weight: bold; margin-left: 10px;"
         )
         self.status_label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-        # Avoid hardcoded 200px constraint that clips long error messages
-        self.status_label.setMinimumWidth(180)
+        # Sized to prevent clipping while keeping toolbox row compact
+        self.status_label.setMinimumWidth(110)
         self.status_label.setMaximumWidth(320)
         toolbox_row.addWidget(self.status_label)
 
@@ -320,8 +320,8 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         toolbox_row.addWidget(self.force_cb)
 
         # Inject button — shown in normal state, hidden while downloading
-        self.inject_btn = QtWidgets.QPushButton("↓ Inject from Steam")
-        self.inject_btn.setFixedWidth(160)
+        self.inject_btn = QtWidgets.QPushButton("↓ Inject Assets")
+        self.inject_btn.setFixedWidth(138)
         self.inject_btn.clicked.connect(self._on_inject_clicked)
         toolbox_row.addWidget(self.inject_btn)
 
@@ -347,7 +347,19 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         toolbox_row.addWidget(self.delete_btn)
 
         self.main_layout.addLayout(toolbox_row)
-        self.main_layout.addSpacing(20)
+        self.main_layout.addSpacing(10)
+
+        # Scrollable container for title, artwork grid, and JSON status
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        scroll.verticalScrollBar().setFocusPolicy(QtCore.Qt.NoFocus)
+
+        scroll_widget = QtWidgets.QWidget()
+        scroll_layout = QtWidgets.QVBoxLayout(scroll_widget)
+        scroll_layout.setContentsMargins(0, 0, 0, 0)
+        scroll_layout.setSpacing(0)
 
         # --- Row 2: Game Title ---
         title_row = QtWidgets.QHBoxLayout()
@@ -357,21 +369,19 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self.title_label = QtWidgets.QLabel("Asset Details")
         self.title_label.setObjectName("heading")
         self.title_label.setWordWrap(True)
-        self.title_label.setFixedWidth(600)  # Fix width to prevent window stretching
-        self.title_label.setMinimumHeight(70)  # Fix height too
-        self.title_label.setAlignment(
-            QtCore.Qt.AlignCenter
-        )  # Center text within the label
+        self.title_label.setFixedWidth(520)
+        self.title_label.setMinimumHeight(44)
+        self.title_label.setAlignment(QtCore.Qt.AlignCenter)
         title_row.addWidget(self.title_label)
 
         # Edit Input
         self.title_edit = QtWidgets.QLineEdit()
-        self.title_edit.setFixedWidth(600)
-        self.title_edit.setMinimumHeight(70)
+        self.title_edit.setFixedWidth(520)
+        self.title_edit.setMinimumHeight(44)
         self.title_edit.setAlignment(QtCore.Qt.AlignCenter)
         self.title_edit.setVisible(False)
         self.title_edit.setStyleSheet(f"""
-            font-size: 22px;
+            font-size: 20px;
             font-weight: 700;
             color: {PALETTE['text_primary']};
             background: {PALETTE['bg_surface']};
@@ -386,7 +396,7 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self.edit_btn.setIcon(get_icon("edit"))
         self.edit_btn.setIconSize(QtCore.QSize(22, 22))
         self.edit_btn.setToolTip("Rename game")
-        self.edit_btn.setFixedSize(40, 40)
+        self.edit_btn.setFixedSize(36, 36)
         self.edit_btn.setCursor(QtCore.Qt.PointingHandCursor)
         self.edit_btn.setStyleSheet("""
             QPushButton {
@@ -396,30 +406,28 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             }
             QPushButton:hover {
                 background-color: rgba(255, 255, 255, 20);
-                border-radius: 20px;
+                border-radius: 18px;
             }
         """)
         self.edit_btn.clicked.connect(self._toggle_edit_name)
         title_row.addWidget(self.edit_btn)
 
         title_row.addStretch()  # Right spacer
-        self.main_layout.addLayout(title_row)
+        scroll_layout.addLayout(title_row)
 
-        self.main_layout.addSpacing(40)
+        scroll_layout.addSpacing(12)
 
-        # Asset Grid
+        # Asset Grid (Clean 2x2 for visual artwork)
         self.grid = QtWidgets.QGridLayout()
         self.grid.setSpacing(0)
         self.grid.setColumnStretch(0, 1)
         self.grid.setColumnStretch(1, 1)
-        # Initialize persistent slots
         self._asset_slots = {}
         positions = {
             "capsule": (0, 0),
             "header": (0, 1),
             "hero": (1, 0),
             "logo": (1, 1),
-            "json": (2, 0),
         }
 
         for key, (row, col) in positions.items():
@@ -429,8 +437,41 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             alignment = QtCore.Qt.AlignLeft if col == 0 else QtCore.Qt.AlignRight
             self.grid.addWidget(slot, row, col, alignment | QtCore.Qt.AlignTop)
 
-        self.main_layout.addLayout(self.grid)
-        self.main_layout.addStretch()
+        scroll_layout.addLayout(self.grid)
+        scroll_layout.addSpacing(10)
+
+        # Compact JSON Logo Positioning Bar
+        self.json_bar = QtWidgets.QFrame()
+        self.json_bar.setStyleSheet(f"""
+            QFrame {{
+                background-color: {PALETTE['bg_card']};
+                border: 1px solid {PALETTE['border']};
+                border-radius: 6px;
+            }}
+        """)
+        json_layout = QtWidgets.QHBoxLayout(self.json_bar)
+        json_layout.setContentsMargins(14, 8, 14, 8)
+        json_layout.setSpacing(8)
+
+        json_title = QtWidgets.QLabel("LOGO POSITIONING (JSON)")
+        json_title.setStyleSheet(
+            f"font-size: 11px; font-weight: 800; letter-spacing: 1px; color: {PALETTE['accent']}; background: transparent; border: none;"
+        )
+        json_layout.addWidget(json_title)
+
+        json_layout.addStretch()
+
+        self.json_status_lbl = QtWidgets.QLabel("× Missing")
+        self.json_status_lbl.setStyleSheet(
+            f"font-size: 12px; font-weight: bold; color: {PALETTE['danger']}; background: transparent; border: none;"
+        )
+        json_layout.addWidget(self.json_status_lbl)
+
+        scroll_layout.addWidget(self.json_bar)
+        scroll_layout.addStretch()
+
+        scroll.setWidget(scroll_widget)
+        self.main_layout.addWidget(scroll, 1)
 
         # Attach opacity effects for animations
         self.btn_opacity_effect = QtWidgets.QGraphicsOpacityEffect(self.inject_btn)
@@ -675,6 +716,19 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         for key, (exists, path) in status.items():
             if key in self._asset_slots:
                 self._asset_slots[key].update_slot(exists, path)
+
+        # Update compact JSON status bar
+        json_exists, _ = status.get("json", (False, None))
+        if json_exists:
+            self.json_status_lbl.setText("✓ Position Data Found")
+            self.json_status_lbl.setStyleSheet(
+                f"font-size: 12px; font-weight: bold; color: {PALETTE['success']}; background: transparent; border: none;"
+            )
+        else:
+            self.json_status_lbl.setText("× Missing")
+            self.json_status_lbl.setStyleSheet(
+                f"font-size: 12px; font-weight: bold; color: {PALETTE['danger']}; background: transparent; border: none;"
+            )
 
         self._update_button_state()
 

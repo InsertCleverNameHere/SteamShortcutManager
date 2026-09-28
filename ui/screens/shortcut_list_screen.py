@@ -1,11 +1,12 @@
 import os
+from pathlib import Path
 
 from PySide6 import QtCore, QtWidgets
 from PySide6.QtGui import QAction, QActionGroup
 
 from core import vdf_parser
 from core.lnk import resolve_lnk
-from core.log import get_logger
+from core.log import get_log_dir, get_logger
 from core.pe_info import get_game_name_from_pe
 from core.platform import get_platform
 from core.shortcuts_io import ShortcutsFileError, get_available_backups, restore_backup
@@ -90,20 +91,6 @@ class ShortcutListScreen(QtWidgets.QWidget):
 
         header.addStretch()
 
-        # Compact Square Refresh Button
-        self.refresh_btn = QtWidgets.QPushButton("↻")
-        self.refresh_btn.setFixedSize(35, 35)  # Strict square dimensions
-        self.refresh_btn.setObjectName("secondary")
-        self.refresh_btn.setToolTip("Reload library from shortcuts.vdf")
-        # Ensure the icon is centered and not padded
-        self.refresh_btn.setStyleSheet(
-            "font-size: 18px; padding: 0px; font-weight: bold;"
-        )
-        self.refresh_btn.clicked.connect(
-            lambda: self.load_user_shortcuts(self._current_user_obj)
-        )
-        header.addWidget(self.refresh_btn)
-
         # Compact Square Sort Button
         self.sort_btn = QtWidgets.QPushButton("⇅")
         self.sort_btn.setFixedSize(35, 35)
@@ -115,11 +102,21 @@ class ShortcutListScreen(QtWidgets.QWidget):
 
         # Add Shortcut Button
         self.add_btn = QtWidgets.QPushButton("+ Add Shortcut")
-        self.add_btn.setFixedWidth(130)
+        self.add_btn.setFixedWidth(138)
         self.add_btn.setFixedHeight(35)
         self.add_btn.clicked.connect(self._on_add_clicked)
         header.addWidget(self.add_btn)
 
+        # Compact Square Overflow Menu Button (Right edge)
+        self.overflow_btn = QtWidgets.QPushButton("⋮")
+        self.overflow_btn.setFixedSize(35, 35)
+        self.overflow_btn.setObjectName("secondary")
+        self.overflow_btn.setToolTip("More options")
+        self.overflow_btn.setStyleSheet(
+            "font-size: 18px; padding: 0px; font-weight: bold;"
+        )
+        self.overflow_btn.clicked.connect(self._show_overflow_menu)
+        header.addWidget(self.overflow_btn)
         layout.addLayout(header)
         layout.addSpacing(8)
 
@@ -259,13 +256,71 @@ class ShortcutListScreen(QtWidgets.QWidget):
             group.addAction(action)
             menu.addAction(action)
 
+        # Anchor the menu directly under the button, left-aligned to it
+        menu.exec(self.sort_btn.mapToGlobal(self.sort_btn.rect().bottomLeft()))
+
+    def _show_overflow_menu(self):
+        """Builds and shows the library maintenance and diagnostics popup menu."""
+        menu = QtWidgets.QMenu(self)
+
+        reload_action = QAction("Reload library", menu)
+        reload_action.triggered.connect(
+            lambda: self.load_user_shortcuts(self._current_user_obj)
+        )
+        menu.addAction(reload_action)
+
         menu.addSeparator()
+
         restore_action = QAction("Restore from backup…", menu)
         restore_action.triggered.connect(self._on_restore_backup_clicked)
         menu.addAction(restore_action)
 
-        # Anchor the menu directly under the button, left-aligned to it
-        menu.exec(self.sort_btn.mapToGlobal(self.sort_btn.rect().bottomLeft()))
+        open_backups_action = QAction("Open backups folder", menu)
+        open_backups_action.triggered.connect(self._on_open_backups_folder_clicked)
+        menu.addAction(open_backups_action)
+
+        menu.addSeparator()
+
+        open_logs_action = QAction("Open logs folder", menu)
+        open_logs_action.triggered.connect(self._on_open_logs_folder_clicked)
+        menu.addAction(open_logs_action)
+
+        # Anchor the menu directly under the button, right-aligned to it
+        pos = self.overflow_btn.rect().bottomRight()
+        pos.setX(pos.x() - menu.sizeHint().width())
+        menu.exec(self.overflow_btn.mapToGlobal(pos))
+
+    def _on_open_backups_folder_clicked(self):
+        if not getattr(self, "_current_user_obj", None):
+            return
+
+        shortcuts_path = Path(self._current_user_obj.shortcuts_path)
+        backup_dir = shortcuts_path.parent / "ssm-backups"
+
+        if not backup_dir.is_dir():
+            QtWidgets.QMessageBox.information(
+                self,
+                "No Backups Found",
+                "No backups folder ('ssm-backups') exists yet for this profile.\n\n"
+                "Backups are created automatically whenever shortcuts are added or modified.",
+            )
+            return
+
+        if not get_platform().open_folder(backup_dir):
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Could Not Open Folder",
+                f"Could not open the backups folder automatically.\n\nPath:\n{backup_dir}",
+            )
+
+    def _on_open_logs_folder_clicked(self):
+        log_dir = get_log_dir()
+        if not get_platform().open_folder(log_dir):
+            QtWidgets.QMessageBox.warning(
+                self,
+                "Could Not Open Folder",
+                f"Could not open the logs folder automatically.\n\nPath:\n{log_dir}",
+            )
 
     def _on_sort_selected(self, mode: str):
         if mode == self._sort_mode:
@@ -361,7 +416,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
 
         # Ensure buttons are disabled during resolution
         self.add_btn.setEnabled(False)
-        self.refresh_btn.setEnabled(False)
+        self.overflow_btn.setEnabled(False)
 
         # Start background resolution via TaskRunner
         self._task_runner.start(
@@ -374,7 +429,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
     def _on_resolve_error(self, exc: Exception):
         """Handles resolution errors and guarantees buttons re-enable."""
         self.add_btn.setEnabled(True)
-        self.refresh_btn.setEnabled(True)
+        self.overflow_btn.setEnabled(True)
         logger.warning(f"Failed to resolve shortcut metadata: {exc}")
         QtWidgets.QMessageBox.warning(
             self,
@@ -460,7 +515,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
         """Continues the Add Shortcut flow after background resolution."""
         # Re-enable buttons
         self.add_btn.setEnabled(True)
-        self.refresh_btn.setEnabled(True)
+        self.overflow_btn.setEnabled(True)
 
         if not exe_path:
             QtWidgets.QMessageBox.warning(

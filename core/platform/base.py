@@ -55,6 +55,10 @@ class PlatformServices(Protocol):
         """Returns typical default path placeholder for the manual setup screen."""
         ...
 
+    def open_folder(self, path: Path | str) -> bool:
+        """Opens the specified directory in the native file manager. Returns True if launched."""
+        ...
+
     def is_sandboxed(self) -> bool:
         """Returns True if the app itself is running in a sandbox (e.g. Flatpak)."""
         ...

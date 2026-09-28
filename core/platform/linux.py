@@ -219,6 +219,34 @@ class LinuxPlatform(PlatformServices):
     def steam_dir_placeholder(self) -> str:
         return "~/.local/share/Steam"
 
+    def open_folder(self, path: Path | str) -> bool:
+        target = Path(path).resolve()
+        if not target.is_dir():
+            return False
+
+        clean_env = os.environ.copy()
+        for var in ("PYTHONHOME", "PYTHONPATH", "APPIMAGE", "APPDIR"):
+            clean_env.pop(var, None)
+        ld_path = clean_env.get("LD_LIBRARY_PATH", "")
+        if ld_path:
+            cleaned_paths = [
+                p for p in ld_path.split(":") if not p.startswith("/tmp/.mount_")
+            ]
+            clean_env["LD_LIBRARY_PATH"] = ":".join(cleaned_paths)
+
+        try:
+            subprocess.Popen(
+                ["xdg-open", str(target)],
+                env=clean_env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return True
+        except Exception:
+            return False
+
     def is_sandboxed(self) -> bool:
         """Detects if we are running inside Flatpak or Snap sandbox."""
         return Path("/.flatpak-info").exists() or "SNAP" in os.environ
