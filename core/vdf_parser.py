@@ -40,6 +40,7 @@ __all__ = [
     "get_value_case_insensitive",
     "normalize_appid",
     "add_new_shortcut",
+    "add_new_shortcuts_batch",
     "update_shortcut_name",
     "update_shortcut_icon",
     "delete_shortcut",
@@ -69,6 +70,36 @@ def add_new_shortcut(
         return True, "Shortcut added!", appid_str
     except Exception as e:
         return False, f"Error: {e}", None
+
+
+def add_new_shortcuts_batch(
+    vdf_path: str, shortcuts: list[tuple[str, str]]
+) -> tuple[bool, str, list[str]]:
+    """
+    Safely adds multiple shortcuts wrapped in a single ShortcutsTransaction.
+    Each shortcut in `shortcuts` is a tuple of (game_name, exe_path).
+    Returns (success: bool, message: str, list_of_unsigned_appids: list[str]).
+    """
+    if not shortcuts:
+        return True, "No shortcuts to add.", []
+
+    try:
+        added_appids: list[str] = []
+        with ShortcutsTransaction(vdf_path) as tx:
+            for game_name, exe_path in shortcuts:
+                appid_str, _ = _io_add_shortcut(
+                    tx.data,
+                    game_name=game_name,
+                    exe_path=exe_path,
+                )
+                added_appids.append(appid_str)
+        return (
+            True,
+            f"Successfully added {len(added_appids)} shortcuts.",
+            added_appids,
+        )
+    except Exception as e:
+        return False, f"Error: {e}", []
 
 
 def update_shortcut_name(

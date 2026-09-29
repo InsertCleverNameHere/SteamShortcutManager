@@ -124,6 +124,47 @@ class _TaskWorker(QtCore.QObject):
             self.error_raised.emit(exc)
 
 
+class _CallbackBridge(QtCore.QObject):
+    """
+    Main-thread receiver QObject that bridges background worker signals
+    to user callbacks safely on the main Qt event loop.
+    """
+
+    def __init__(
+        self,
+        on_result: Callable[[Any], None] | None = None,
+        on_error: Callable[[Exception], None] | None = None,
+        on_cancelled: Callable[[], None] | None = None,
+        on_progress: Callable[[Any], None] | None = None,
+        parent: QtCore.QObject | None = None,
+    ):
+        super().__init__(parent)
+        self._on_result = on_result
+        self._on_error = on_error
+        self._on_cancelled = on_cancelled
+        self._on_progress = on_progress
+
+    @QtCore.Slot(object)
+    def handle_result(self, val: Any) -> None:
+        if self._on_result:
+            self._on_result(val)
+
+    @QtCore.Slot(object)
+    def handle_error(self, err: Exception) -> None:
+        if self._on_error:
+            self._on_error(err)
+
+    @QtCore.Slot()
+    def handle_cancelled(self) -> None:
+        if self._on_cancelled:
+            self._on_cancelled()
+
+    @QtCore.Slot(object)
+    def handle_progress(self, prog: Any) -> None:
+        if self._on_progress:
+            self._on_progress(prog)
+
+
 class TaskRunner(QtCore.QObject):
     """
     Manages background QThread lifecycles, keyed deduplication, and safe shutdown.
@@ -184,24 +225,35 @@ class TaskRunner(QtCore.QObject):
             else:
                 self._anonymous_tasks.add(entry)
 
-        # 2. Wire callbacks
-        if on_result:
-            worker.result_ready.connect(on_result)
-        if on_error:
-            worker.error_raised.connect(on_error)
-        if on_cancelled:
-            worker.cancelled.connect(on_cancelled)
-        if on_progress:
-            worker.progress_update.connect(on_progress)
+        # 2. Wire callbacks through a main-thread bridge QObject
+        bridge = _CallbackBridge(
+            on_result=on_result,
+            on_error=on_error,
+            on_cancelled=on_cancelled,
+            on_progress=on_progress,
+            parent=self,
+        )
+
+        worker.result_ready.connect(bridge.handle_result)
+        worker.error_raised.connect(bridge.handle_error)
+        worker.cancelled.connect(bridge.handle_cancelled)
+        worker.progress_update.connect(bridge.handle_progress)
 
         # 3. Exactly-once terminal lifecycle wiring
         thread.started.connect(worker.run)
 
+        cleaned_up = False
+
         def _cleanup():
+            nonlocal cleaned_up
+            if cleaned_up:
+                return
+            cleaned_up = True
             with self._lock:
                 if key and self._keyed_tasks.get(key) == entry:
                     self._keyed_tasks.pop(key, None)
                 self._anonymous_tasks.discard(entry)
+            bridge.deleteLater()
 
         # Stop thread loop after terminal signal
         worker.result_ready.connect(thread.quit)

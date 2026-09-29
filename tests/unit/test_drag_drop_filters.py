@@ -18,7 +18,7 @@ def test_file_dialog_filter_uses_platform(qtbot):
         qtbot.addWidget(screen)
 
         with patch(
-            "PySide6.QtWidgets.QFileDialog.getOpenFileName", return_value=("", "")
+            "PySide6.QtWidgets.QFileDialog.getOpenFileNames", return_value=([], "")
         ) as mock_dialog:
             screen._on_add_clicked()
             mock_dialog.assert_called_once_with(
@@ -98,10 +98,12 @@ def test_on_shortcut_resolved_warns_on_installer_path(qtbot):
         with patch.object(
             QtWidgets.QMessageBox, "question", return_value=QtWidgets.QMessageBox.No
         ) as mock_question:
-            with patch.object(QtWidgets.QInputDialog, "getText") as mock_input:
+            with patch(
+                "ui.screens.shortcut_list_screen.AddShortcutPromptDialog"
+            ) as mock_prompt_cls:
                 screen._on_shortcut_resolved(
                     "/tmp/setup.exe", "/tmp/setup.exe", "Setup"
                 )
                 mock_question.assert_called_once()
                 # Name dialog must not be reached if user cancels the warning
-                mock_input.assert_not_called()
+                mock_prompt_cls.assert_not_called()
