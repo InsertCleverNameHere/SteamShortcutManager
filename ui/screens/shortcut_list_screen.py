@@ -70,9 +70,7 @@ class AddShortcutPromptDialog(QtWidgets.QDialog):
         layout.addWidget(title_lbl)
 
         path_lbl = QtWidgets.QLabel(exe_path)
-        path_lbl.setStyleSheet(
-            f"font-size: 11px; color: {PALETTE['text_muted']};"
-        )
+        path_lbl.setStyleSheet(f"font-size: 11px; color: {PALETTE['text_muted']};")
         path_lbl.setWordWrap(True)
         layout.addWidget(path_lbl)
 
@@ -94,9 +92,7 @@ class AddShortcutPromptDialog(QtWidgets.QDialog):
 
         self.add_another_btn = QtWidgets.QPushButton("+ Add Another")
         self.add_another_btn.setObjectName("secondary")
-        self.add_another_btn.setToolTip(
-            "Add multiple games across different folders"
-        )
+        self.add_another_btn.setToolTip("Add multiple games across different folders")
         self.add_another_btn.clicked.connect(self._on_add_another)
         btn_row.addWidget(self.add_another_btn)
 
@@ -504,11 +500,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
             # Multi-file selected directly in browse dialog
             if not confirm_steam_closed(self):
                 return
-            install = (
-                self._current_user_obj.install
-                if self._current_user_obj
-                else None
-            )
+            install = self._current_user_obj.install if self._current_user_obj else None
             dlg = BatchAddDialog(
                 self,
                 initial_paths=[os.path.normpath(f) for f in files],
@@ -685,11 +677,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
                 QtWidgets.QMessageBox.critical(self, "Error", msg)
 
         elif prompt.result_action == AddShortcutPromptDialog.ACTION_ADD_ANOTHER:
-            install = (
-                self._current_user_obj.install
-                if self._current_user_obj
-                else None
-            )
+            install = self._current_user_obj.install if self._current_user_obj else None
             dlg = BatchAddDialog(self, install=install)
             dlg.add_executable(raw_path, custom_name=prompt.game_name)
             # Immediately open browse for game 2
@@ -704,9 +692,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
             return
 
         vdf_path = self._current_user_obj.shortcuts_path
-        success, msg, added_ids = vdf_parser.add_new_shortcuts_batch(
-            vdf_path, selected
-        )
+        success, msg, added_ids = vdf_parser.add_new_shortcuts_batch(vdf_path, selected)
 
         if success:
             count = len(added_ids)

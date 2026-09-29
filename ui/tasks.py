@@ -225,7 +225,7 @@ class TaskRunner(QtCore.QObject):
             else:
                 self._anonymous_tasks.add(entry)
 
-       # 2. Wire callbacks through a main-thread bridge QObject
+        # 2. Wire callbacks through a main-thread bridge QObject
         bridge = _CallbackBridge(
             on_result=on_result,
             on_error=on_error,

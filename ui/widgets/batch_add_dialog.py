@@ -60,12 +60,8 @@ class BatchAddDialog(QtWidgets.QDialog):
         )
         header_col.addWidget(title_lbl)
 
-        sub_lbl = QtWidgets.QLabel(
-            "Select programs to add to your Steam Library"
-        )
-        sub_lbl.setStyleSheet(
-            f"font-size: 13px; color: {PALETTE['text_secondary']};"
-        )
+        sub_lbl = QtWidgets.QLabel("Select programs to add to your Steam Library")
+        sub_lbl.setStyleSheet(f"font-size: 13px; color: {PALETTE['text_secondary']};")
         header_col.addWidget(sub_lbl)
 
         layout.addLayout(header_col)
@@ -83,18 +79,12 @@ class BatchAddDialog(QtWidgets.QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(36)
         self.table.setShowGrid(False)
-        self.table.setSelectionBehavior(
-            QtWidgets.QAbstractItemView.SelectRows
-        )
-        self.table.setSelectionMode(
-            QtWidgets.QAbstractItemView.SingleSelection
-        )
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
 
         h_header = self.table.horizontalHeader()
         h_header.setStretchLastSection(True)
-        h_header.setSectionResizeMode(
-            0, QtWidgets.QHeaderView.Interactive
-        )
+        h_header.setSectionResizeMode(0, QtWidgets.QHeaderView.Interactive)
         h_header.setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
         self.table.setColumnWidth(0, 240)
 
@@ -131,9 +121,7 @@ class BatchAddDialog(QtWidgets.QDialog):
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def add_executable(
-        self, raw_path: str, custom_name: str | None = None
-    ) -> bool:
+    def add_executable(self, raw_path: str, custom_name: str | None = None) -> bool:
         """
         Resolves executable and appends it to the table if valid.
         Returns True if added or updated.
@@ -156,9 +144,7 @@ class BatchAddDialog(QtWidgets.QDialog):
         game_name = custom_name.strip() if custom_name else default_name
 
         # Check platform warnings
-        warnings = get_platform().path_warnings(
-            exe_path, install=self._install
-        )
+        warnings = get_platform().path_warnings(exe_path, install=self._install)
         warning_text = "\n".join(warnings) if warnings else None
 
         # Check if already present in table
@@ -195,12 +181,8 @@ class BatchAddDialog(QtWidgets.QDialog):
 
         # Column 1: Location Path
         path_item = QtWidgets.QTableWidgetItem(exe_path)
-        path_item.setFlags(
-            QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable
-        )
-        path_item.setForeground(
-            QtGui.QColor(PALETTE["text_secondary"])
-        )
+        path_item.setFlags(QtCore.Qt.ItemIsEnabled | QtCore.Qt.ItemIsSelectable)
+        path_item.setForeground(QtGui.QColor(PALETTE["text_secondary"]))
         path_item.setToolTip(exe_path)
 
         self.table.setItem(row_idx, 0, name_item)
