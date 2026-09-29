@@ -72,6 +72,14 @@ def create_backup(shortcuts_path: str | Path, max_backups: int = 15) -> Path | N
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     backup_path = backup_dir / f"shortcuts_{timestamp}.vdf.bak"
+
+    # Avoid timestamp collisions on rapid sub-millisecond calls (e.g. Windows timer resolution)
+    if backup_path.exists():
+        counter = 1
+        while backup_path.exists():
+            backup_path = backup_dir / f"shortcuts_{timestamp}_{counter}.vdf.bak"
+            counter += 1
+
     shutil.copy2(src, backup_path)
 
     # Ensure backup modification time reflects creation time, not source mtime
@@ -259,11 +267,14 @@ def restore_backup(backup_path: str | Path, target_path: str | Path) -> bool:
     if not src.is_file():
         return False
 
-    # Snapshot current state before restoring so restore is completely reversible
+    # 1. Verify and parse backup data into memory before modifying anything
+    data = load_shortcuts(src, strict=True)
+
+    # 2. Snapshot current state before restoring so restore is completely reversible
     if dst.is_file() and dst.stat().st_size > 0:
         create_backup(dst)
 
-    data = load_shortcuts(src, strict=True)
+    # 3. Atomically overwrite target with verified backup content
     save_shortcuts_atomic(dst, data)
     return True
 
