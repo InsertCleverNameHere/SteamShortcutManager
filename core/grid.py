@@ -25,8 +25,34 @@ SLOT_MAPPING: dict[str, tuple[str, str]] = {
 }
 
 VALID_ARTWORK_EXTENSIONS = (".jpg", ".jpeg", ".png")
-VALID_ICON_EXTENSIONS = (".ico",)
-ALL_IMAGE_EXTENSIONS = VALID_ARTWORK_EXTENSIONS + VALID_ICON_EXTENSIONS
+VALID_ICON_EXTENSIONS = (".ico", ".png")
+ALL_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".ico")
+
+
+def ico_to_png(ico_bytes: bytes) -> bytes | None:
+    """
+    Decodes an ICO payload and re-encodes it into a clean, standardized 32-bit PNG.
+    Resolves missing mipmap and non-standard stream issues in Steam's CEF UI.
+    Returns PNG bytes on success, or None on failure/unparseable data.
+    """
+    try:
+        from typing import Any, cast
+
+        from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+        from PySide6.QtGui import QImage
+
+        img = QImage()
+        if not img.loadFromData(ico_bytes):
+            return None
+
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.WriteOnly)
+        if img.save(buf, cast(Any, "PNG")):
+            return bytes(ba.data())
+    except Exception as e:
+        logger.debug(f"Could not convert ICO to PNG: {e}")
+    return None
 
 
 def validate_image_bytes(data: bytes, ext: str) -> bool:
@@ -226,12 +252,16 @@ def get_asset_status(
         str(json_path) if json_path.is_file() else None,
     )
 
-    # 3. Client icon
-    icon_path = target_dir / f"{appid_str}_icon.ico"
-    status["icon"] = (
-        icon_path.is_file(),
-        str(icon_path) if icon_path.is_file() else None,
-    )
+    # 3. Client icon (supports .png and .ico, preferring .png for reliable Steam rendering)
+    found_icon = False
+    found_icon_path = None
+    for ext in (".png", ".ico"):
+        icon_cand = target_dir / f"{appid_str}_icon{ext}"
+        if icon_cand.is_file():
+            found_icon = True
+            found_icon_path = str(icon_cand)
+            break
+    status["icon"] = (found_icon, found_icon_path)
 
     return status
 

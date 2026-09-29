@@ -16,6 +16,7 @@ import requests
 from core.grid import (
     SLOT_MAPPING,
     get_asset_status,
+    ico_to_png,
     validate_image_bytes,
     write_asset_atomic,
     write_json_positioning,
@@ -207,7 +208,7 @@ def download_assets(
     if token.is_cancelled:
         return False, "❌ Cancelled."
 
-    # 3. Download official client icon (.ico)
+    # 3. Download official client icon (.ico or normalized .png)
     if client_icon_hash:
         if force or not existing_status.get("icon", (False,))[0]:
             icon_url = f"{COMMUNITY_ICON_BASE}/{steam_id_str}/{client_icon_hash}.ico"
@@ -216,9 +217,15 @@ def download_assets(
                 try:
                     resp = session.get(icon_url, timeout=DEFAULT_TIMEOUT, stream=True)
                     if resp.status_code == 200:
-                        write_asset_atomic(
-                            grid_dir, appid_str, "_icon", ".ico", resp.content
-                        )
+                        png_bytes = ico_to_png(resp.content)
+                        if png_bytes:
+                            write_asset_atomic(
+                                grid_dir, appid_str, "_icon", ".png", png_bytes
+                            )
+                        else:
+                            write_asset_atomic(
+                                grid_dir, appid_str, "_icon", ".ico", resp.content
+                            )
                         downloaded_count += 1
                     else:
                         report(f"⚠️ Icon download returned HTTP {resp.status_code}")

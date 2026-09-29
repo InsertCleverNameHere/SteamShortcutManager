@@ -37,3 +37,44 @@ def test_download_assets_fetches_client_icon(tmp_path: Path):
                 icon_path = os.path.join(grid_dir, "12345_icon.ico")
                 assert os.path.isfile(icon_path)
                 assert open(icon_path, "rb").read() == mock_response.content
+
+
+def test_download_assets_normalizes_ico_to_png(tmp_path: Path):
+    """Verify that download_assets converts valid ICO to PNG and writes _icon.png."""
+    grid_dir = str(tmp_path / "grid")
+
+    mock_product_info = {
+        "appid": 1205520,
+        "name": "Pentiment",
+        "library_assets_full": {},
+        "library_assets": {},
+        "clienticon": "valid_icon_hash",
+    }
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"\x00\x00\x01\x00" + b"\x00" * 32
+
+    fake_png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+    with patch(
+        "core.asset_provider.fetch_product_info", return_value=mock_product_info
+    ):
+        with patch("core.asset_provider.is_network_available", return_value=True):
+            with patch("requests.Session.get", return_value=mock_response):
+                with patch(
+                    "core.asset_provider.ico_to_png", return_value=fake_png_bytes
+                ):
+                    success, msg = download_assets(
+                        steam_appid="1205520",
+                        local_appid="99999",
+                        grid_dir=grid_dir,
+                        force=True,
+                    )
+
+                    assert success is True
+                    png_path = os.path.join(grid_dir, "99999_icon.png")
+                    ico_path = os.path.join(grid_dir, "99999_icon.ico")
+                    assert os.path.isfile(png_path)
+                    assert not os.path.isfile(ico_path)
+                    assert open(png_path, "rb").read() == fake_png_bytes

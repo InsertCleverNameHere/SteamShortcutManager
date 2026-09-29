@@ -616,8 +616,14 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             grid_dir = os.path.join(
                 os.path.dirname(self._current_shortcuts_path), "grid"
             )
-            icon_candidate = os.path.join(grid_dir, f"{self._current_appid}_icon.ico")
-            if os.path.isfile(icon_candidate):
+            icon_candidate = None
+            for ext in (".png", ".ico"):
+                cand = os.path.join(grid_dir, f"{self._current_appid}_icon{ext}")
+                if os.path.isfile(cand):
+                    icon_candidate = cand
+                    break
+
+            if icon_candidate:
                 update_shortcut_icon(
                     self._current_shortcuts_path,
                     self._current_appid,
