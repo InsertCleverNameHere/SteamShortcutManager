@@ -66,3 +66,8 @@ def test_windows_open_folder(tmp_path: Path):
     # Exception in os.startfile returns False
     with patch("os.startfile", side_effect=OSError("Boom"), create=True):
         assert platform.open_folder(target_dir) is False
+
+
+def test_windows_find_proton_prefix_is_none():
+    win = WindowsPlatform()
+    assert win.find_proton_prefix("12345") is None

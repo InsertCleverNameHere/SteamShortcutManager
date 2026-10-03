@@ -49,3 +49,37 @@ def test_normalize_appid_edge_cases():
     assert normalize_appid(None) == "0"
     assert normalize_appid("0") == "0"
     assert normalize_appid("invalid") == "invalid"
+
+
+def test_extract_appid():
+    from core.appid import extract_appid
+
+    # Raw numeric strings
+    assert extract_appid("1205520") == "1205520"
+    assert extract_appid("  480  ") == "480"
+
+    # Steam Store URLs
+    assert extract_appid("https://store.steampowered.com/app/1091500") == "1091500"
+    assert (
+        extract_appid("https://store.steampowered.com/app/1091500/Cyberpunk_2077/")
+        == "1091500"
+    )
+    assert (
+        extract_appid("http://store.steampowered.com/app/1091500/Cyberpunk_2077/?snr=1")
+        == "1091500"
+    )
+    assert extract_appid("store.steampowered.com/app/1091500") == "1091500"
+
+    # SteamDB URLs
+    assert extract_appid("https://steamdb.info/app/3489700") == "3489700"
+    assert extract_appid("https://steamdb.info/app/3489700/") == "3489700"
+    assert extract_appid("https://steamdb.info/app/3489700/charts/") == "3489700"
+    assert extract_appid("steamdb.info/app/3489700") == "3489700"
+
+    # Invalid and empty inputs
+    assert extract_appid(None) is None
+    assert extract_appid("") is None
+    assert extract_appid("   ") is None
+    assert extract_appid("0") is None
+    assert extract_appid("invalid_text") is None
+    assert extract_appid("https://google.com") is None

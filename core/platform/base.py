@@ -68,3 +68,15 @@ class PlatformServices(Protocol):
     ) -> list[str]:
         """Returns user-facing warning strings if the game path has compatibility risks."""
         ...
+
+    def find_proton_prefix(
+        self,
+        appid: str,
+        install: SteamInstall | None = None,
+        launch_options: str = "",
+    ) -> Path | None:
+        """
+        Locates the Wine or Proton prefix directory for an AppID on the platform.
+        Returns the Path to the prefix directory if found, or None.
+        """
+        ...

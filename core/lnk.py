@@ -53,7 +53,3 @@ def resolve_lnk(path: str | Path) -> str | None:
         pass
 
     return None
-
-
-# Backward-compatibility alias matching the old utils_win naming
-resolve_windows_shortcut = resolve_lnk

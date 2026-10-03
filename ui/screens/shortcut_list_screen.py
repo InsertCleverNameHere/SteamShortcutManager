@@ -5,6 +5,11 @@ from PySide6 import QtCore, QtWidgets
 from PySide6.QtGui import QAction, QActionGroup
 
 from core import vdf_parser
+from core.grid import (
+    delete_orphaned_grid_assets,
+    find_orphaned_grid_assets,
+    is_complete,
+)
 from core.lnk import resolve_lnk
 from core.log import get_log_dir, get_logger
 from core.pe_info import get_game_name_from_pe
@@ -145,7 +150,16 @@ class ShortcutListScreen(QtWidgets.QWidget):
         self._current_user_obj = None
         self._task_runner = TaskRunner(self)
         self._card_data = []  # Track widgets and names for filtering
-        self._sort_mode = "default"  # "default" | "alpha" | "missing_first"
+
+        # Restore sort mode preference, defaulting to alphabetical
+        settings = QtCore.QSettings("SteamShortcutManager", "SSM")
+        stored_sort = str(settings.value("sort_mode", "alpha"))
+        self._sort_mode = (
+            stored_sort
+            if stored_sort in ("alpha", "default", "missing_first")
+            else "alpha"
+        )
+
         self.setAcceptDrops(True)
         self._search_timer = QtCore.QTimer()
         self._search_timer.setSingleShot(True)
@@ -335,8 +349,8 @@ class ShortcutListScreen(QtWidgets.QWidget):
         group.setExclusive(True)
 
         options = [
-            ("default", "File order"),
             ("alpha", "Alphabetical (A–Z)"),
+            ("default", "Date added"),
             ("missing_first", "Missing assets first"),
         ]
 
@@ -360,6 +374,10 @@ class ShortcutListScreen(QtWidgets.QWidget):
             lambda: self.load_user_shortcuts(self._current_user_obj)
         )
         menu.addAction(reload_action)
+
+        clean_orphans_action = QAction("Clean orphaned artwork…", menu)
+        clean_orphans_action.triggered.connect(self._on_clean_orphaned_artwork_clicked)
+        menu.addAction(clean_orphans_action)
 
         menu.addSeparator()
 
@@ -414,10 +432,89 @@ class ShortcutListScreen(QtWidgets.QWidget):
                 f"Could not open the logs folder automatically.\n\nPath:\n{log_dir}",
             )
 
+    def _on_clean_orphaned_artwork_clicked(self) -> None:
+        """Scans for and safely cleans artwork belonging to removed non-Steam shortcuts."""
+        if not getattr(self, "_current_user_obj", None):
+            return
+
+        if not confirm_steam_closed(self):
+            return
+
+        shortcuts_path = Path(self._current_user_obj.shortcuts_path)
+        grid_dir = shortcuts_path.parent / "grid"
+        if not grid_dir.is_dir():
+            QtWidgets.QMessageBox.information(
+                self,
+                "No Artwork Folder",
+                "No grid artwork folder exists yet for this profile.",
+            )
+            return
+
+        try:
+            data = vdf_parser.load_shortcuts(shortcuts_path)
+            shortcuts = vdf_parser.get_shortcut_list(data)
+            active_appids = {
+                vdf_parser.normalize_appid(
+                    vdf_parser.get_value_case_insensitive(s, "appid", "0")
+                )
+                for s in shortcuts
+            }
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self, "Error", f"Could not read shortcuts file: {e}"
+            )
+            return
+
+        orphans = find_orphaned_grid_assets(grid_dir, active_appids)
+        if not orphans:
+            QtWidgets.QMessageBox.information(
+                self,
+                "No Orphaned Artwork",
+                "No orphaned artwork found. Your grid folder is completely clean.",
+            )
+            return
+
+        total_bytes = sum(p.stat().st_size for p in orphans if p.is_file())
+        if total_bytes >= 1024 * 1024:
+            size_str = f"{total_bytes / (1024 * 1024):.1f} MB"
+        else:
+            size_str = f"{max(1, round(total_bytes / 1024))} KB"
+
+        count = len(orphans)
+        file_word = "file" if count == 1 else "files"
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "Clean Orphaned Artwork",
+            f"Found {count} orphaned artwork {file_word} ({size_str}) from non-Steam shortcuts "
+            "that have been removed.\n\n"
+            "Official Steam Store game artwork will not be affected.\n\n"
+            "Do you want to permanently delete these files?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No,
+        )
+        if reply != QtWidgets.QMessageBox.Yes:
+            return
+
+        deleted_count, freed_bytes = delete_orphaned_grid_assets(
+            grid_dir, active_appids
+        )
+        if freed_bytes >= 1024 * 1024:
+            freed_str = f"{freed_bytes / (1024 * 1024):.1f} MB"
+        else:
+            freed_str = f"{max(1, round(freed_bytes / 1024))} KB"
+
+        QtWidgets.QMessageBox.information(
+            self,
+            "Cleanup Complete",
+            f"Successfully removed {deleted_count} orphaned {file_word} and freed {freed_str}.",
+        )
+
     def _on_sort_selected(self, mode: str):
         if mode == self._sort_mode:
             return
         self._sort_mode = mode
+        settings = QtCore.QSettings("SteamShortcutManager", "SSM")
+        settings.setValue("sort_mode", mode)
         self.load_user_shortcuts(self._current_user_obj)
 
     def _on_restore_backup_clicked(self):
@@ -709,14 +806,8 @@ class ShortcutListScreen(QtWidgets.QWidget):
 
     @staticmethod
     def _asset_complete(appid: str, grid_files: set) -> bool:
-        img_exts = (".jpg", ".png", ".jpeg")
-        return (
-            any(f"{appid}p{e}" in grid_files for e in img_exts)
-            and any(f"{appid}{e}" in grid_files for e in img_exts)
-            and any(f"{appid}_hero{e}" in grid_files for e in img_exts)
-            and any(f"{appid}_logo{e}" in grid_files for e in img_exts)
-            and f"{appid}.json" in grid_files
-        )
+        """Compatibility wrapper delegating to core.grid.is_complete."""
+        return is_complete("", appid, existing_files=grid_files)
 
     def load_user_shortcuts(self, user_obj):
         """Called when a user is selected in the main menu."""
@@ -761,11 +852,12 @@ class ShortcutListScreen(QtWidgets.QWidget):
             elif self._sort_mode == "missing_first":
                 shortcuts = sorted(
                     shortcuts,
-                    key=lambda s: self._asset_complete(
+                    key=lambda s: is_complete(
+                        grid_dir,
                         vdf_parser.normalize_appid(
                             vdf_parser.get_value_case_insensitive(s, "appid", "0")
                         ),
-                        grid_files,
+                        existing_files=grid_files,
                     ),
                 )
             # Sync the count back to the user object
@@ -815,7 +907,9 @@ class ShortcutListScreen(QtWidgets.QWidget):
                 )
 
                 # 2. Check Assets
-                is_complete = self._asset_complete(appid, grid_files)
+                assets_complete = is_complete(
+                    grid_dir, appid, existing_files=grid_files
+                )
 
                 # 3. Build Card
                 card = QtWidgets.QFrame()
@@ -838,7 +932,7 @@ class ShortcutListScreen(QtWidgets.QWidget):
                     f"font-size: 14px; font-weight: bold; color: {PALETTE['text_primary']}; border: none; background: transparent;"
                 )
                 title_row.addWidget(title_lbl)
-                if not is_complete:
+                if not assets_complete:
                     flag = QtWidgets.QLabel("⚠ Missing Assets")
                     flag.setStyleSheet(
                         f"color: {PALETTE['warning']}; font-size: 10px; font-weight: bold; background: transparent;"

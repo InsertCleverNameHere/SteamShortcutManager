@@ -239,3 +239,80 @@ def test_shortcut_list_asset_complete_recognizes_jpeg():
         f"{appid}.json",
     }
     assert ShortcutListScreen._asset_complete(appid, grid_files) is True
+
+
+def test_is_complete_with_and_without_existing_files(tmp_path):
+    """Verify is_complete handles both live filesystem checks and pre-scanned in-memory sets."""
+    from pathlib import Path
+
+    from core.grid import is_complete
+
+    grid_dir = Path(tmp_path) / "grid"
+    grid_dir.mkdir()
+    appid = "12345"
+
+    assert not is_complete(grid_dir, appid)
+    assert not is_complete(grid_dir, appid, existing_files=set())
+
+    (grid_dir / f"{appid}p.jpg").touch()
+    (grid_dir / f"{appid}.png").touch()
+    (grid_dir / f"{appid}_hero.jpg").touch()
+    (grid_dir / f"{appid}_logo.png").touch()
+    (grid_dir / f"{appid}.json").touch()
+
+    assert is_complete(grid_dir, appid)
+    files_set = set(p.name for p in grid_dir.iterdir())
+    assert is_complete(grid_dir, appid, existing_files=files_set)
+
+    (grid_dir / f"{appid}_logo.png").unlink()
+    files_set_incomplete = set(p.name for p in grid_dir.iterdir())
+
+    assert not is_complete(grid_dir, appid)
+    assert not is_complete(grid_dir, appid, existing_files=files_set_incomplete)
+
+
+def test_orphaned_grid_assets_safety_and_deletion(tmp_path):
+    from pathlib import Path
+
+    from core.grid import (
+        delete_orphaned_grid_assets,
+        find_orphaned_grid_assets,
+    )
+
+    grid_dir = Path(tmp_path) / "grid"
+    grid_dir.mkdir()
+
+    # 1. Official Steam Store game custom art (must NEVER be considered an orphan)
+    steam_store_art = grid_dir / "400p.jpg"
+    steam_store_art.write_bytes(b"steam game art")
+
+    # 2. Active non-Steam shortcut art (in shortcuts.vdf)
+    active_non_steam_id = "3829104812"  # >= 0x80000000
+    active_art = grid_dir / f"{active_non_steam_id}p.jpg"
+    active_art.write_bytes(b"active non-steam art")
+
+    # 3. Orphaned non-Steam shortcut art (deleted from shortcuts.vdf)
+    orphan_id = "3999999999"  # >= 0x80000000
+    orphan_art1 = grid_dir / f"{orphan_id}p.jpg"
+    orphan_art2 = grid_dir / f"{orphan_id}_hero.jpg"
+    orphan_art1.write_bytes(b"orphan capsule")
+    orphan_art2.write_bytes(b"orphan hero")
+
+    active_set = {active_non_steam_id}
+
+    # Verify discovery
+    orphans = find_orphaned_grid_assets(grid_dir, active_set)
+    orphan_names = [p.name for p in orphans]
+
+    assert orphan_names == [f"{orphan_id}_hero.jpg", f"{orphan_id}p.jpg"]
+    assert "400p.jpg" not in orphan_names
+    assert f"{active_non_steam_id}p.jpg" not in orphan_names
+
+    # Verify deletion
+    count, freed = delete_orphaned_grid_assets(grid_dir, active_set)
+    assert count == 2
+    assert freed > 0
+    assert not orphan_art1.exists()
+    assert not orphan_art2.exists()
+    assert steam_store_art.exists()
+    assert active_art.exists()

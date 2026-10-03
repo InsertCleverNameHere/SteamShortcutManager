@@ -151,3 +151,11 @@ class WindowsPlatform(PlatformServices):
                 "This file appears to be an installer or redistributable, not a game executable."
             )
         return warnings
+
+    def find_proton_prefix(
+        self,
+        appid: str,
+        install: SteamInstall | None = None,
+        launch_options: str = "",
+    ) -> Path | None:
+        return None

@@ -7,6 +7,7 @@ atomic writes, sibling pruning, and backup cleanup.
 
 import json
 import os
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -266,12 +267,26 @@ def get_asset_status(
     return status
 
 
-def is_complete(grid_dir: Path | str, appid: str | int) -> bool:
+def is_complete(
+    grid_dir: Path | str,
+    appid: str | int,
+    existing_files: set[str] | None = None,
+) -> bool:
     """
-    Returns True if the shortcut has all required artwork and positioning JSON.
+    Returns True if the shortcut has all required visual artwork slots and positioning JSON.
+    If existing_files is provided, checks file names directly in memory without disk I/O.
     """
+    appid_str = str(appid)
+    if existing_files is not None:
+        for slot_name, (suffix, _) in SLOT_MAPPING.items():
+            if not any(
+                f"{appid_str}{suffix}{ext}" in existing_files
+                for ext in VALID_ARTWORK_EXTENSIONS
+            ):
+                return False
+        return f"{appid_str}.json" in existing_files
+
     status = get_asset_status(grid_dir, appid)
-    # Visual assets + JSON positioning must all exist
     required_slots = ("capsule", "header", "hero", "logo", "json")
     return all(status[slot][0] for slot in required_slots)
 
@@ -340,3 +355,74 @@ def clean_stale_temp_files(grid_dir: Path | str, max_age_seconds: int = 86400) -
     except Exception:
         pass
     return pruned
+
+
+_GRID_APPID_PATTERN = re.compile(r"^\.?(\d+)")
+NON_STEAM_APPID_MIN = 0x80000000  # 2147483648: High bit set for non-Steam shortcuts
+
+
+def find_orphaned_grid_assets(
+    grid_dir: Path | str,
+    active_appids: set[str],
+) -> list[Path]:
+    """
+    Identifies grid artwork files belonging to non-Steam shortcuts that no longer exist.
+    Guarantees official Steam Store game artwork (AppIDs without high bit 0x80000000)
+    is never classified as orphaned.
+    """
+    target_dir = Path(grid_dir)
+    if not target_dir.is_dir():
+        return []
+
+    clean_active = {str(a).strip() for a in active_appids}
+    orphans: list[Path] = []
+
+    try:
+        for item in target_dir.iterdir():
+            if not item.is_file():
+                continue
+
+            match = _GRID_APPID_PATTERN.match(item.name)
+            if not match:
+                continue
+
+            appid_str = match.group(1)
+            try:
+                appid_int = int(appid_str)
+            except ValueError:
+                continue
+
+            # Safety guard: only consider non-Steam shortcuts (high-bit set)
+            if appid_int < NON_STEAM_APPID_MIN:
+                continue
+
+            if appid_str not in clean_active:
+                orphans.append(item)
+    except Exception as e:
+        logger.warning(f"Error scanning for orphaned grid assets: {e}")
+
+    return sorted(orphans, key=lambda p: p.name)
+
+
+def delete_orphaned_grid_assets(
+    grid_dir: Path | str,
+    active_appids: set[str],
+) -> tuple[int, int]:
+    """
+    Deletes orphaned non-Steam grid artwork files.
+    Returns (count_deleted, total_bytes_freed).
+    """
+    orphans = find_orphaned_grid_assets(grid_dir, active_appids)
+    count = 0
+    bytes_freed = 0
+
+    for path in orphans:
+        try:
+            size = path.stat().st_size
+            path.unlink()
+            count += 1
+            bytes_freed += size
+        except OSError as e:
+            logger.warning(f"Could not delete orphaned asset {path}: {e}")
+
+    return count, bytes_freed
