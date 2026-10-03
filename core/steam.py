@@ -150,34 +150,16 @@ def find_shortcuts(steam_dir: str | Path | SteamInstall) -> list[SteamUserShortc
     return results
 
 
-def get_asset_status(shortcuts_vdf_path: str, appid: str) -> dict:
+def get_asset_status(
+    shortcuts_vdf_path: str, appid: str
+) -> dict[str, tuple[bool, str | None]]:
     """
-    Checks for the 5 required assets in the grid folder.
-    Returns a dict: { 'type': (exists: bool, path: str) }
+    Delegates to core.grid.get_asset_status. Maintained for backward compatibility.
     """
-    grid_dir = os.path.join(os.path.dirname(shortcuts_vdf_path), "grid")
+    from core.grid import get_asset_status as _grid_get_asset_status
 
-    # Define patterns to check. We check for .jpg then .png for images.
-    # For JSON, it is strictly .json.
-    patterns = {
-        "capsule": [f"{appid}p.jpg", f"{appid}p.png", f"{appid}p.jpeg"],
-        "header": [f"{appid}.jpg", f"{appid}.png", f"{appid}.jpeg"],
-        "hero": [f"{appid}_hero.jpg", f"{appid}_hero.png", f"{appid}_hero.jpeg"],
-        "logo": [f"{appid}_logo.png", f"{appid}_logo.jpg", f"{appid}_logo.jpeg"],
-        "json": [f"{appid}.json"],
-    }
-
-    status = {}
-    for key, filenames in patterns.items():
-        found_path = None
-        for f in filenames:
-            full_path = os.path.join(grid_dir, f)
-            if os.path.isfile(full_path):
-                found_path = full_path
-                break
-        status[key] = (found_path is not None, found_path)
-
-    return status
+    grid_dir = Path(shortcuts_vdf_path).parent / "grid"
+    return _grid_get_asset_status(grid_dir, appid)
 
 
 def find_all_shortcuts() -> list[SteamUserShortcuts]:

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from core.log import get_logger
-from ui.tasks import CancelToken, TaskCancelledError
+from core.tasks import CancelToken, TaskCancelledError
 
 logger = get_logger("steam_fetch")
 

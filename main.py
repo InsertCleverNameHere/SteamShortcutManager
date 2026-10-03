@@ -118,15 +118,16 @@ if "--fetch-product-info" in sys.argv:
         sys.exit(1)
 
 
+from PySide6 import QtCore
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 
-from core.steam import detect_default_steam_dir, find_all_shortcuts, find_shortcuts
+from core import steam
+from ui import theme
 from ui.screens.asset_details_screen import AssetDetailsScreen
 from ui.screens.library_screen import LibraryScreen
 from ui.screens.setup_screen import SetupScreen
 from ui.screens.shortcut_list_screen import ShortcutListScreen
-from ui.theme import APP_STYLESHEET, get_app_icon, load_bundled_fonts
 
 
 class MainWindow(QMainWindow):
@@ -134,12 +135,20 @@ class MainWindow(QMainWindow):
         super().__init__()
         setup_logging()  # Ensure app.log is created on startup
         self.setWindowTitle("Steam Shortcut Manager")
-        self.resize(720, 580)
         self.setMinimumSize(670, 540)
-        app_icon = get_app_icon()
+
+        # Restore window geometry from persistent settings
+        settings = QtCore.QSettings("SteamShortcutManager", "SSM")
+        saved_geom = settings.value("geometry")
+        if isinstance(saved_geom, QtCore.QByteArray) and not saved_geom.isEmpty():
+            self.restoreGeometry(saved_geom)
+        else:
+            self.resize(720, 580)
+
+        app_icon = theme.get_app_icon()
         if not app_icon.isNull():
             self.setWindowIcon(app_icon)
-        self.setStyleSheet(APP_STYLESHEET)
+        self.setStyleSheet(theme.APP_STYLESHEET)
 
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
@@ -180,19 +189,19 @@ class MainWindow(QMainWindow):
         )
 
         # Auto-detect across all discovered installs
-        all_users = find_all_shortcuts()
+        all_users = steam.find_all_shortcuts()
         if all_users:
             self.library_screen.populate(all_users)
             self.stack.setCurrentWidget(self.library_screen)
         else:
-            steam_path = detect_default_steam_dir()
+            steam_path = steam.detect_default_steam_dir()
             if steam_path:
                 self.on_steam_dir_found(steam_path)
             else:
                 self.stack.setCurrentWidget(self.setup_screen)
 
     def on_steam_dir_found(self, path):
-        users = find_shortcuts(path)
+        users = steam.find_shortcuts(path)
         self.library_screen.populate(users)
         self.stack.setCurrentWidget(self.library_screen)
 
@@ -211,6 +220,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Ensures background worker threads are cleanly terminated before window destruction."""
+        # Persist window geometry
+        settings = QtCore.QSettings("SteamShortcutManager", "SSM")
+        settings.setValue("geometry", self.saveGeometry())
+
         # Hide window immediately so the application never appears frozen to the OS
         self.hide()
 
@@ -231,7 +244,7 @@ if __name__ == "__main__":
         from PySide6.QtCore import QTimer
 
         app = QApplication(sys.argv)
-        load_bundled_fonts()
+        theme.load_bundled_fonts()
         QGuiApplication.setDesktopFileName("steamshortcutmanager")
         window = MainWindow()
         # Verify startup and exit immediately with code 0
@@ -239,9 +252,9 @@ if __name__ == "__main__":
         sys.exit(app.exec())
 
     app = QApplication(sys.argv)
-    load_bundled_fonts()
+    theme.load_bundled_fonts()
     QGuiApplication.setDesktopFileName("steamshortcutmanager")
-    app_icon = get_app_icon()
+    app_icon = theme.get_app_icon()
     if not app_icon.isNull():
         app.setWindowIcon(app_icon)
 

@@ -212,3 +212,35 @@ def test_linux_open_folder(tmp_path: Path):
     # Exception during launch returns False cleanly
     with patch("subprocess.Popen", side_effect=OSError("Boom")):
         assert platform.open_folder(target_dir) is False
+
+
+def test_linux_find_proton_prefix_compatdata(tmp_path):
+    from core.platform.base import SteamInstall
+    from core.platform.linux import LinuxPlatform
+
+    linux = LinuxPlatform()
+    steam_root = tmp_path / "Steam"
+    compat_pfx = steam_root / "steamapps" / "compatdata" / "3829104812" / "pfx"
+    compat_pfx.mkdir(parents=True)
+
+    install = SteamInstall(path=steam_root, kind="native", label="Steam")
+    found = linux.find_proton_prefix("3829104812", install=install)
+
+    assert found is not None
+    assert found == compat_pfx
+
+    # AppID without prefix returns None
+    assert linux.find_proton_prefix("9999999", install=install) is None
+
+
+def test_linux_find_proton_prefix_launch_options(tmp_path):
+    from core.platform.linux import LinuxPlatform
+
+    linux = LinuxPlatform()
+    custom_wine = tmp_path / "custom_wine_prefix"
+    custom_wine.mkdir()
+
+    opts = f'WINEPREFIX="{custom_wine}" %command%'
+    found = linux.find_proton_prefix("12345", launch_options=opts)
+
+    assert found == custom_wine

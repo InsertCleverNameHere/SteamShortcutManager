@@ -4,8 +4,38 @@ Pure AppID generation, normalization, and conversion functions.
 Matches Steam's binary shortcuts.vdf and grid filename specifications.
 """
 
+import re
 import zlib
 from typing import Any
+
+_APPID_URL_PATTERN = re.compile(
+    r"(?:store\.steampowered\.com|steamdb\.info)/app/(\d+)", re.IGNORECASE
+)
+
+
+def extract_appid(text: str | None) -> str | None:
+    """
+    Extracts a numeric Steam AppID from raw user input.
+    Accepts:
+    - Pure numeric AppID string (e.g. '1205520')
+    - Steam Store URL (e.g. 'https://store.steampowered.com/app/1205520/Game_Name/')
+    - SteamDB URL (e.g. 'https://steamdb.info/app/1205520/')
+
+    Returns unsigned AppID string, or None if no valid AppID could be resolved.
+    """
+    if not text:
+        return None
+
+    clean = text.strip()
+    match = _APPID_URL_PATTERN.search(clean)
+    if match:
+        appid = match.group(1)
+        return appid if appid != "0" else None
+
+    if clean.isdigit():
+        return clean if clean != "0" else None
+
+    return None
 
 
 def generate_shortcut_appid(exe_path: str, game_name: str) -> int:

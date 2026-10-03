@@ -286,3 +286,106 @@ class LinuxPlatform(PlatformServices):
             pass
 
         return warnings
+
+    def _get_library_folders(self, steam_root: Path) -> list[Path]:
+        """Reads all library folder paths from steamapps/libraryfolders.vdf."""
+        libs = [steam_root]
+        lib_vdf = steam_root / "steamapps" / "libraryfolders.vdf"
+        if not lib_vdf.is_file():
+            lib_vdf = steam_root / "config" / "libraryfolders.vdf"
+            if not lib_vdf.is_file():
+                return libs
+
+        try:
+            import vdf
+
+            with open(lib_vdf, encoding="utf-8", errors="replace") as f:
+                data = vdf.load(f)
+
+            root_key = data.get("libraryfolders", data.get("LibraryFolders", {}))
+            for k, val in root_key.items():
+                if isinstance(val, dict):
+                    raw_p = val.get("path")
+                    if raw_p:
+                        p = Path(raw_p)
+                        if p.is_dir() and p not in libs:
+                            libs.append(p)
+                elif isinstance(val, str) and k.isdigit():
+                    p = Path(val)
+                    if p.is_dir() and p not in libs:
+                        libs.append(p)
+        except Exception:
+            pass
+
+        return libs
+
+    def find_proton_prefix(
+        self,
+        appid: str,
+        install: SteamInstall | None = None,
+        launch_options: str = "",
+    ) -> Path | None:
+        """
+        Locates the Wine or Proton prefix directory for an AppID on Linux:
+        1. Checks WINEPREFIX= or STEAM_COMPAT_DATA_PATH= in launch_options.
+        2. Searches steamapps/compatdata/<appid>/pfx across all Steam library folders.
+        """
+        import re
+
+        clean_appid = str(appid).strip()
+        if not clean_appid or clean_appid == "0":
+            return None
+
+        # 1. Check explicit environment variables in launch_options
+        if launch_options:
+            wine_match = re.search(
+                r'WINEPREFIX=(?:"([^"]+)"|\'([^\']+)\'|(\S+))', launch_options
+            )
+            if wine_match:
+                raw_pfx = (
+                    wine_match.group(1) or wine_match.group(2) or wine_match.group(3)
+                )
+                p = Path(os.path.expanduser(os.path.expandvars(raw_pfx)))
+                if p.is_dir():
+                    return p
+
+            compat_match = re.search(
+                r'STEAM_COMPAT_DATA_PATH=(?:"([^"]+)"|\'([^\']+)\'|(\S+))',
+                launch_options,
+            )
+            if compat_match:
+                raw_compat = (
+                    compat_match.group(1)
+                    or compat_match.group(2)
+                    or compat_match.group(3)
+                )
+                base_compat = Path(os.path.expanduser(os.path.expandvars(raw_compat)))
+                for cand in (
+                    base_compat / clean_appid / "pfx",
+                    base_compat / clean_appid,
+                    base_compat / "pfx",
+                    base_compat,
+                ):
+                    if cand.is_dir():
+                        return cand
+
+        # 2. Collect candidate Steam root directories
+        steam_roots: list[Path] = []
+        if install and install.path and install.path.is_dir():
+            steam_roots.append(install.path)
+        else:
+            for inst in self.discover_steam_installs():
+                if inst.path.is_dir() and inst.path not in steam_roots:
+                    steam_roots.append(inst.path)
+
+        # 3. Search steamapps/compatdata/<appid> across all library folders
+        for root in steam_roots:
+            for lib in self._get_library_folders(root):
+                pfx_dir = lib / "steamapps" / "compatdata" / clean_appid / "pfx"
+                if pfx_dir.is_dir():
+                    return pfx_dir
+                compat_dir = lib / "steamapps" / "compatdata" / clean_appid
+                if compat_dir.is_dir():
+                    return compat_dir
+
+        return None

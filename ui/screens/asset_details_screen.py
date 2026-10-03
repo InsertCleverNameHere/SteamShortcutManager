@@ -1,10 +1,12 @@
 import os
 from enum import Enum, auto
+from pathlib import Path
 from typing import Any
 
 from PySide6 import QtCore, QtWidgets
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QAction, QPixmap
 
+from core.appid import extract_appid
 from core.asset_provider import download_assets
 from core.grid import (
     SLOT_MAPPING,
@@ -20,7 +22,21 @@ from core.net import (
     is_trusted_steam_url,
     search_steam_store,
 )
-from core.vdf_parser import delete_shortcut, update_shortcut_icon, update_shortcut_name
+from core.platform import get_platform
+from core.prefix_store import (
+    clear_prefix_override,
+    get_prefix_override,
+    set_prefix_override,
+)
+from core.vdf_parser import (
+    delete_shortcut,
+    get_shortcut_list,
+    get_value_case_insensitive,
+    load_shortcuts,
+    normalize_appid,
+    update_shortcut_icon,
+    update_shortcut_name,
+)
 from ui.tasks import CancelToken, Task, TaskRunner
 from ui.theme import PALETTE, get_icon
 from ui.widgets.steam_guard import confirm_steam_closed
@@ -205,6 +221,11 @@ class AssetDetailsScreen(QtWidgets.QWidget):
 
         self.delete_btn.setEnabled(not is_busy)
         self.edit_btn.setEnabled(not is_busy)
+        can_open_folder = (
+            not is_busy and self._game_dir is not None and self._game_dir.is_dir()
+        )
+        self.folder_btn.setEnabled(can_open_folder)
+        self.prefix_btn.setEnabled(not is_busy)
         self.force_cb.setEnabled(not is_busy)
         self.back_btn.setEnabled(not is_busy)
 
@@ -243,6 +264,11 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self._current_appid: str = ""
         self._current_shortcuts_path = ""
         self._current_name = ""
+        self._current_exe_path = ""
+        self._current_launch_options = ""
+        self._game_dir: Path | None = None
+        self._active_prefix: Path | None = None
+        self._is_prefix_override = False
         self._search_state = SearchState.IDLE
         self._all_assets_present = False
         self._is_busy = False
@@ -412,6 +438,48 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self.edit_btn.clicked.connect(self._toggle_edit_name)
         title_row.addWidget(self.edit_btn)
 
+        ## Open Game Folder Button
+        self.folder_btn = QtWidgets.QPushButton()
+        self.folder_btn.setIcon(get_icon("folder"))
+        self.folder_btn.setIconSize(QtCore.QSize(22, 22))
+        self.folder_btn.setToolTip("Open game folder")
+        self.folder_btn.setFixedSize(36, 36)
+        self.folder_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.folder_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 20);
+                border-radius: 18px;
+            }
+        """)
+        self.folder_btn.clicked.connect(self._on_open_game_folder_clicked)
+        title_row.addWidget(self.folder_btn)
+
+        # Prefix Management Button (Linux only)
+        self.prefix_btn = QtWidgets.QPushButton()
+        self.prefix_btn.setIcon(get_icon("tools"))
+        self.prefix_btn.setIconSize(QtCore.QSize(20, 20))
+        self.prefix_btn.setToolTip("Proton / Wine Prefix")
+        self.prefix_btn.setFixedSize(36, 36)
+        self.prefix_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.prefix_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                padding: 0px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 20);
+                border-radius: 18px;
+            }
+        """)
+        self.prefix_btn.clicked.connect(self._show_prefix_menu)
+        title_row.addWidget(self.prefix_btn)
+
         title_row.addStretch()  # Right spacer
         scroll_layout.addLayout(title_row)
 
@@ -565,19 +633,23 @@ class AssetDetailsScreen(QtWidgets.QWidget):
             return
 
         default_id = self._suggested_steam_id if self._suggested_steam_id else ""
-        steam_id, ok = QtWidgets.QInputDialog.getText(
-            self, "Inject Assets", "Enter Steam AppID:", text=default_id
+        user_input, ok = QtWidgets.QInputDialog.getText(
+            self,
+            "Inject Assets",
+            "Enter Steam AppID or Store / SteamDB URL:",
+            text=default_id,
         )
 
-        if not (ok and steam_id):
+        if not (ok and user_input):
             return
 
-        steam_id = steam_id.strip()
-        if not steam_id.isdigit():
+        resolved_id = extract_appid(user_input)
+        if not resolved_id:
             self.status_opacity_effect.setOpacity(1.0)
-            self.status_label.setText("⚠️ AppID must be numeric")
+            self.status_label.setText("⚠️ Enter a valid AppID or Steam / SteamDB URL")
             return
 
+        steam_id = resolved_id
         force = self.force_cb.isChecked()
 
         if hasattr(self, "_status_fade_timer") and self._status_fade_timer.isActive():
@@ -697,7 +769,90 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self.status_label.setText("🌐 Search failed - check connection")
         self._update_button_state()
 
-    def load_assets(self, game_name, shortcuts_path, appid):
+    def _on_open_game_folder_clicked(self) -> None:
+        """Reveals the game directory in the native file manager."""
+        if self._game_dir and self._game_dir.is_dir():
+            get_platform().open_folder(self._game_dir)
+
+    def _on_open_prefix_folder_clicked(self) -> None:
+        """Reveals the active prefix directory in the native file manager."""
+        if self._active_prefix and self._active_prefix.is_dir():
+            get_platform().open_folder(self._active_prefix)
+
+    def _show_prefix_menu(self) -> None:
+        """Displays options to open, override, or reset the prefix directory."""
+        menu = QtWidgets.QMenu(self)
+
+        open_action = QAction("Open Prefix Folder", menu)
+        if self._active_prefix and self._active_prefix.is_dir():
+            open_action.setToolTip(str(self._active_prefix))
+            open_action.triggered.connect(self._on_open_prefix_folder_clicked)
+        else:
+            open_action.setEnabled(False)
+            open_action.setText("Open Prefix Folder (Not Found)")
+        menu.addAction(open_action)
+
+        menu.addSeparator()
+
+        set_action = QAction("Set Custom Prefix…", menu)
+        set_action.triggered.connect(self._on_set_custom_prefix)
+        menu.addAction(set_action)
+
+        reset_action = QAction("Reset to Default Prefix", menu)
+        reset_action.setEnabled(self._is_prefix_override)
+        reset_action.triggered.connect(self._on_reset_prefix)
+        menu.addAction(reset_action)
+
+        menu.exec(self.prefix_btn.mapToGlobal(self.prefix_btn.rect().bottomLeft()))
+
+    def _on_set_custom_prefix(self) -> None:
+        chosen = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            "Select Prefix Directory",
+            str(self._active_prefix) if self._active_prefix else "",
+        )
+        if chosen and self._current_appid:
+            set_prefix_override(self._current_appid, chosen)
+            self._update_prefix_state(self._current_appid, self._current_launch_options)
+
+    def _on_reset_prefix(self) -> None:
+        if self._current_appid:
+            clear_prefix_override(self._current_appid)
+            self._update_prefix_state(self._current_appid, self._current_launch_options)
+
+    def _update_prefix_state(self, appid: str, launch_options: str) -> None:
+        """Resolves active prefix (override or detected) and updates UI state."""
+        if get_platform().name != "linux":
+            self.prefix_btn.setVisible(False)
+            self._active_prefix = None
+            self._is_prefix_override = False
+            return
+
+        self.prefix_btn.setVisible(True)
+        override = get_prefix_override(appid)
+        if override:
+            self._active_prefix = override
+            self._is_prefix_override = True
+            self.prefix_btn.setToolTip(
+                f"Prefix (Custom Override):\n{override}\n\nClick to manage"
+            )
+            return
+
+        self._is_prefix_override = False
+        detected = get_platform().find_proton_prefix(
+            appid, launch_options=launch_options
+        )
+        self._active_prefix = detected
+        if detected:
+            self.prefix_btn.setToolTip(
+                f"Proton Prefix:\n{detected}\n\nClick to open or customize"
+            )
+        else:
+            self.prefix_btn.setToolTip(
+                "Proton prefix not found (launch game once via Proton)\n\nClick to set custom prefix"
+            )
+
+    def load_assets(self, game_name, shortcuts_path, appid, exe_path: str = ""):
         # Defuse any active rename edit state immediately
         self._reset_edit_mode()
 
@@ -708,6 +863,47 @@ class AssetDetailsScreen(QtWidgets.QWidget):
         self._current_shortcuts_path = shortcuts_path
         self._current_appid = appid
         self.title_label.setText(game_name)
+
+        launch_options = ""
+        # Retrieve executable path and launch options from shortcuts.vdf
+        if os.path.isfile(shortcuts_path):
+            try:
+                data = load_shortcuts(shortcuts_path)
+                for entry in get_shortcut_list(data):
+                    entry_id = normalize_appid(
+                        get_value_case_insensitive(entry, "appid", "0")
+                    )
+                    if entry_id == normalize_appid(appid):
+                        if not exe_path:
+                            exe_path = get_value_case_insensitive(entry, "Exe", "")
+                        launch_options = get_value_case_insensitive(
+                            entry, "LaunchOptions", ""
+                        )
+                        break
+            except Exception:
+                pass
+
+        self._current_launch_options = launch_options
+        self._update_prefix_state(appid, launch_options)
+
+        self._current_exe_path = exe_path
+        clean_exe = exe_path.strip().strip('"')
+
+        # Evaluate target according to direct .exe rule
+        if clean_exe.lower().endswith(".exe") and os.path.isfile(clean_exe):
+            self._game_dir = Path(clean_exe).parent
+            self.folder_btn.setEnabled(True)
+            self.folder_btn.setToolTip(f"Open game folder:\n{self._game_dir}")
+        elif clean_exe.lower().endswith(".exe"):
+            self._game_dir = None
+            self.folder_btn.setEnabled(False)
+            self.folder_btn.setToolTip("Target executable not found on disk")
+        else:
+            self._game_dir = None
+            self.folder_btn.setEnabled(False)
+            self.folder_btn.setToolTip(
+                "Game is managed by an external launcher or runner"
+            )
 
         if is_new_game:
             self._trigger_search(game_name)

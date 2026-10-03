@@ -9,7 +9,6 @@ import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import requests
 
@@ -17,7 +16,6 @@ from core.grid import (
     SLOT_MAPPING,
     get_asset_status,
     ico_to_png,
-    validate_image_bytes,
     write_asset_atomic,
     write_json_positioning,
 )
@@ -27,7 +25,6 @@ from core.net import (
     create_steam_session,
     is_network_available,
     is_trusted_steam_url,
-    search_steam_store,
 )
 from core.steam_fetch import (
     SteamAppNotFoundError,
@@ -35,7 +32,7 @@ from core.steam_fetch import (
     SteamFetchTimeoutError,
     fetch_product_info,
 )
-from ui.tasks import CancelToken, TaskCancelledError
+from core.tasks import CancelToken, TaskCancelledError
 
 logger = get_logger("asset_provider")
 
@@ -44,33 +41,6 @@ CDN_BASE = "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps"
 COMMUNITY_ICON_BASE = (
     "https://shared.fastly.steamstatic.com/community_assets/images/apps"
 )
-
-
-# Backward-compatibility alias for tests and existing callers
-def is_valid_image_bytes(data: bytes, expected_ext: str) -> bool:
-    return validate_image_bytes(data, expected_ext)
-
-
-def is_internet_reachable(timeout: float = 3.0) -> bool:
-    return is_network_available(timeout)
-
-
-def search_steam_apps(query: str) -> dict[str, Any] | str | None:
-    """
-    Backward-compatible wrapper for search_steam_store.
-    Returns dict with id, name, thumb_url on match, None on no match,
-    or 'ERR_NETWORK' on error.
-    """
-    res = search_steam_store(query)
-    if res.status == "ok" and res.item:
-        return {
-            "id": res.item.appid,
-            "name": res.item.name,
-            "thumb_url": res.item.thumb_url,
-        }
-    elif res.status == "error":
-        return "ERR_NETWORK"
-    return None
 
 
 def download_assets(
