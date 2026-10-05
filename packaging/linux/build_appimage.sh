@@ -7,11 +7,10 @@ cd "${REPO_ROOT}"
 
 echo "=== Building Steam Shortcut Manager AppImage ==="
 
-# 1. Compile with PyInstaller if payload does not exist
-if [ ! -f "dist/steamshortcutmanager/steamshortcutmanager" ]; then
-    echo "Compiling PyInstaller payload..."
-    pyinstaller --clean build.spec
-fi
+# 1. Compile PyInstaller payload
+echo "Compiling PyInstaller payload..."
+rm -rf dist/steamshortcutmanager build/AppDir
+pyinstaller --clean build.spec
 
 # 2. Assemble AppDir
 APPDIR="build/AppDir"

@@ -190,28 +190,44 @@ def test_linux_open_folder(tmp_path: Path):
     target_dir = tmp_path / "target"
     target_dir.mkdir()
 
-    # Test sanitized environment stripping
+    # Test sanitized environment stripping when D-Bus portal fails or is absent
     env_patch = {
+        "APPDIR": "/tmp/.mount_1234",
         "PYTHONHOME": "/tmp/appimage_py",
         "APPIMAGE": "/path/to/app.AppImage",
-        "LD_LIBRARY_PATH": "/tmp/.mount_1234/lib:/usr/lib",
+        "LD_LIBRARY_PATH": "/tmp/.mount_1234/_internal:/usr/lib",
+        "LD_LIBRARY_PATH_ORIG": "/tmp/.mount_1234/lib:/usr/lib64",
+        "PATH": "/tmp/.mount_1234/usr/bin:/usr/bin:/bin",
     }
-    with patch.dict(os.environ, env_patch):
-        with patch("subprocess.Popen") as mock_popen:
+    with patch.dict(os.environ, env_patch, clear=True):
+        # D-Bus method succeeds
+        with patch("subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
             assert platform.open_folder(target_dir) is True
-            mock_popen.assert_called_once()
-            args, kwargs = mock_popen.call_args
-            assert args[0] == ["xdg-open", str(target_dir.resolve())]
-            assert kwargs.get("start_new_session") is True
+            mock_run.assert_called_once()
+            cmd = mock_run.call_args[0][0]
+            assert "org.freedesktop.FileManager1.ShowFolders" in cmd
 
-            passed_env = kwargs.get("env", {})
-            assert "PYTHONHOME" not in passed_env
-            assert "APPIMAGE" not in passed_env
-            assert passed_env.get("LD_LIBRARY_PATH") == "/usr/lib"
+        # D-Bus fails, falls back to xdg-open
+        with patch("subprocess.run", return_value=MagicMock(returncode=1)):
+            with patch("subprocess.Popen") as mock_popen:
+                assert platform.open_folder(target_dir) is True
+                mock_popen.assert_called_once()
+                args, kwargs = mock_popen.call_args
+                assert args[0] == ["xdg-open", str(target_dir.resolve())]
+                assert kwargs.get("start_new_session") is True
 
-    # Exception during launch returns False cleanly
-    with patch("subprocess.Popen", side_effect=OSError("Boom")):
-        assert platform.open_folder(target_dir) is False
+                passed_env = kwargs.get("env", {})
+                assert "PYTHONHOME" not in passed_env
+                assert "APPIMAGE" not in passed_env
+                assert "APPDIR" not in passed_env
+                assert "/tmp/.mount_1234" not in passed_env.get("PATH", "")
+                assert passed_env.get("LD_LIBRARY_PATH") == "/usr/lib64"
+                assert "LD_LIBRARY_PATH_ORIG" not in passed_env
+
+    # Exception during all methods returns False cleanly
+    with patch("subprocess.run", side_effect=OSError("No dbus")):
+        with patch("subprocess.Popen", side_effect=OSError("Boom")):
+            assert platform.open_folder(target_dir) is False
 
 
 def test_linux_find_proton_prefix_compatdata(tmp_path):
