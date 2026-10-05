@@ -186,16 +186,7 @@ class LinuxPlatform(PlatformServices):
             else ["steam", "-shutdown"]
         )
 
-        # Sanitize environment: strip AppImage runtime variables before launching subprocesses
-        clean_env = os.environ.copy()
-        for var in ("PYTHONHOME", "PYTHONPATH", "APPIMAGE", "APPDIR"):
-            clean_env.pop(var, None)
-        ld_path = clean_env.get("LD_LIBRARY_PATH", "")
-        if ld_path:
-            cleaned_paths = [
-                p for p in ld_path.split(":") if not p.startswith("/tmp/.mount_")
-            ]
-            clean_env["LD_LIBRARY_PATH"] = ":".join(cleaned_paths)
+        clean_env = self._get_clean_host_env()
 
         try:
             subprocess.run(
@@ -219,21 +210,112 @@ class LinuxPlatform(PlatformServices):
     def steam_dir_placeholder(self) -> str:
         return "~/.local/share/Steam"
 
+    def _get_clean_host_env(self) -> dict[str, str]:
+        """
+        Creates an execution environment safe for launching host binaries from an AppImage.
+        Strips PyInstaller bundled paths, mount directories, and runtime overrides.
+        """
+        env = os.environ.copy()
+        mount_dir = env.get("APPDIR", "")
+
+        # 1. Restore or cleanse LD_LIBRARY_PATH
+        orig_ld = env.pop("LD_LIBRARY_PATH_ORIG", None)
+        if orig_ld:
+            # If LD_LIBRARY_PATH_ORIG exists, filter out any references to the AppImage mount
+            clean_ld_parts = [
+                p
+                for p in orig_ld.split(":")
+                if p and (not mount_dir or mount_dir not in p)
+            ]
+            if clean_ld_parts:
+                env["LD_LIBRARY_PATH"] = ":".join(clean_ld_parts)
+            else:
+                env.pop("LD_LIBRARY_PATH", None)
+        else:
+            env.pop("LD_LIBRARY_PATH", None)
+
+        # 2. Clean PATH of AppImage mount directories
+        orig_path = env.get("PATH", "")
+        if orig_path:
+            clean_path_parts = [
+                p
+                for p in orig_path.split(":")
+                if p and (not mount_dir or mount_dir not in p)
+            ]
+            env["PATH"] = ":".join(clean_path_parts)
+
+        # 3. Strip Python, AppImage, and Qt runtime isolation variables
+        for var in (
+            "PYTHONHOME",
+            "PYTHONPATH",
+            "APPIMAGE",
+            "APPDIR",
+            "QT_PLUGIN_PATH",
+            "QML2_IMPORT_PATH",
+        ):
+            env.pop(var, None)
+
+        return env
+
     def open_folder(self, path: Path | str) -> bool:
         target = Path(path).resolve()
         if not target.is_dir():
             return False
 
-        clean_env = os.environ.copy()
-        for var in ("PYTHONHOME", "PYTHONPATH", "APPIMAGE", "APPDIR"):
-            clean_env.pop(var, None)
-        ld_path = clean_env.get("LD_LIBRARY_PATH", "")
-        if ld_path:
-            cleaned_paths = [
-                p for p in ld_path.split(":") if not p.startswith("/tmp/.mount_")
-            ]
-            clean_env["LD_LIBRARY_PATH"] = ":".join(cleaned_paths)
+        clean_env = self._get_clean_host_env()
 
+        target_uri = target.as_uri()
+
+        # Method 1: org.freedesktop.FileManager1.ShowFolders (native Dolphin / file manager D-Bus)
+        try:
+            ret = subprocess.run(
+                [
+                    "dbus-send",
+                    "--session",
+                    "--dest=org.freedesktop.FileManager1",
+                    "--type=method_call",
+                    "/org/freedesktop/FileManager1",
+                    "org.freedesktop.FileManager1.ShowFolders",
+                    f"array:string:{target_uri}",
+                    "string:",
+                ],
+                env=clean_env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=2,
+            )
+            if ret.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+        # Method 2: org.freedesktop.portal.OpenURI (desktop portal D-Bus)
+        try:
+            ret = subprocess.run(
+                [
+                    "dbus-send",
+                    "--session",
+                    "--dest=org.freedesktop.portal.Desktop",
+                    "--type=method_call",
+                    "/org/freedesktop/portal/desktop",
+                    "org.freedesktop.portal.OpenURI.OpenURI",
+                    "string:",
+                    f"string:{target_uri}",
+                    "dict:string:variant:",
+                ],
+                env=clean_env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=2,
+            )
+            if ret.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+        # Method 3: Fallback to xdg-open with sanitized host environment
         try:
             subprocess.Popen(
                 ["xdg-open", str(target)],
